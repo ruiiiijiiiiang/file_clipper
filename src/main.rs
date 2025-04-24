@@ -4,8 +4,12 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use fs_extra::{copy_items, dir::CopyOptions, move_items};
-use ratatui::prelude::*;
-use shellexpand::tilde;
+use ratatui::{
+    backend::CrosstermBackend,
+    style::{Color, Style},
+    widgets::{Block, Borders, List, ListItem},
+    Terminal,
+};
 use std::{
     collections::VecDeque, env, error::Error, fs::metadata, io::ErrorKind, path::Path, process,
     time::SystemTime,
@@ -28,7 +32,25 @@ fn move_helper(paths: &[String], operation: Operation) -> Result<(), Box<dyn Err
         } else {
             path.canonicalize()?
         };
-        let metadata = metadata(&absolute_path)?;
+        println!("{}", absolute_path.display());
+        let metadata = match metadata(&absolute_path) {
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                eprintln!(
+                    "[Error]: {} does not exist; skipping",
+                    absolute_path.display()
+                );
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "[Error]: failed to get metadata for {}: {}",
+                    absolute_path.display(),
+                    e
+                );
+                continue;
+            }
+            Ok(metadata) => metadata,
+        };
         let entry_type = if metadata.is_dir() {
             EntryType::Directory
         } else if metadata.is_symlink() {
@@ -36,7 +58,10 @@ fn move_helper(paths: &[String], operation: Operation) -> Result<(), Box<dyn Err
         } else if metadata.is_file() {
             EntryType::File
         } else {
-            eprintln!("Error: unsupported file type: {}", absolute_path.display());
+            eprintln!(
+                "[Error]: unsupported file type: {}",
+                absolute_path.display()
+            );
             continue;
         };
         clipboard_entries.push_front(RecordEntry {
@@ -50,7 +75,7 @@ fn move_helper(paths: &[String], operation: Operation) -> Result<(), Box<dyn Err
     let clipboard_entries: Vec<RecordEntry> = clipboard_entries.into();
     write_clipboard(&clipboard_entries)?;
     for path in paths {
-        println!("Info: {:?} {}", operation, path);
+        println!("[Info]: {:?} {}", operation, path);
     }
     Ok(())
 }
@@ -66,20 +91,19 @@ fn handle_cut(paths: &[String]) -> Result<(), Box<dyn Error>> {
 fn handle_paste(path: &String) -> Result<(), Box<dyn Error>> {
     let clipboard_entries = match read_clipboard() {
         Err(e) => {
-            eprintln!("Error: failed to read clipboard: {}", e);
+            eprintln!("[Error]: failed to read clipboard: {}", e);
             return Ok(());
         }
         Ok(Some(clipboard_entries)) if !clipboard_entries.is_empty() => clipboard_entries,
         _ => {
-            println!("Info: clipboard is empty");
+            println!("[Info]: clipboard is empty");
             return Ok(());
         }
     };
-    println!("clipboard? {:?}", &clipboard_entries);
 
     let mut history_entries = VecDeque::from(match read_history() {
         Err(e) => {
-            eprintln!("Error: failed to read history: {}", e);
+            eprintln!("[Error]: failed to read history: {}", e);
             return Ok(());
         }
         Ok(None) => Vec::new(),
@@ -90,12 +114,12 @@ fn handle_paste(path: &String) -> Result<(), Box<dyn Error>> {
     for entry in clipboard_entries {
         let metadata = match metadata(&entry.path) {
             Err(e) if e.kind() == ErrorKind::NotFound => {
-                eprintln!("Error: {} no longer exists; skipping", entry.path);
+                eprintln!("[Error]: {} no longer exists; skipping", entry.path);
                 continue;
             }
             Err(e) => {
                 eprintln!(
-                    "Error: failed to get metadata for {}: {}; skipping",
+                    "[Error]: failed to get metadata for {}: {}; skipping",
                     entry.path, e
                 );
                 continue;
@@ -122,34 +146,54 @@ fn handle_paste(path: &String) -> Result<(), Box<dyn Error>> {
 }
 
 fn enter_tui_mode() -> Result<(), Box<dyn Error>> {
-    // Implement Ratatui TUI here
-    println!("Entering TUI mode");
-
-    // Basic Ratatui setup (you'll expand this significantly)
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let run_app = || -> Result<(), Box<dyn Error>> {
+    let entries = read_history()?.unwrap_or(vec![]);
+    if entries.is_empty() {
+        println!("[Info]: history is empty");
+        return Ok(());
+    }
+    let mut selected = 0;
+
+    let mut run_app = || -> Result<(), Box<dyn Error>> {
         loop {
-            // TODO: add TUI
-            // terminal.draw(|f| {
-            //     let size = f.size();
-            //     let block = Block::default()
-            //         .title("Kuick-Klip History")
-            //         .borders(Borders::ALL);
-            //     f.render_widget(block, size);
-            // })?;
-            //
-            // if event::poll(std::time::Duration::from_millis(100))? {
-            //     if let Event::Key(key) = event::read()? {
-            //         if key.code == KeyCode::Char('q') || key.code == KeyCode::Ctrl('c') {
-            //             break;
-            //         }
-            //     }
-            // }
+            terminal.draw(|f| {
+                let area = f.area();
+
+                let items: Vec<ListItem> = entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, entry)| {
+                        let style = if i == selected {
+                            Style::default().bg(Color::Blue)
+                        } else {
+                            Style::default()
+                        };
+                        ListItem::new(entry.path.clone()).style(style)
+                    })
+                    .collect();
+
+                let list = List::new(items)
+                    .block(Block::default().borders(Borders::ALL))
+                    .highlight_style(Style::default().bg(Color::LightGreen));
+
+                f.render_widget(list, area);
+            })?;
+
+            if event::poll(std::time::Duration::from_millis(100))? {
+                if let Event::Key(key) = event::read()? {
+                    match key.code {
+                        KeyCode::Char('q') => break,
+                        KeyCode::Char('j') => selected = (selected + 1).min(entries.len() - 1),
+                        KeyCode::Char('k') => selected = selected.saturating_sub(1),
+                        _ => {}
+                    }
+                }
+            }
         }
         Ok(())
     };
@@ -186,14 +230,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     match command.as_str() {
         "copy" | "cp" | "y" => {
             if args.len() < 3 {
-                eprintln!("Error: copy command requires at least one path");
+                eprintln!("[Error]: copy command requires at least one path");
                 process::exit(1);
             }
             handle_copy(&args[2..])?
         }
         "cut" | "mv" | "x" => {
             if args.len() < 3 {
-                eprintln!("Error: cut command requires at least one path");
+                eprintln!("[Error]: cut command requires at least one path");
                 process::exit(1);
             }
             handle_cut(&args[2..])?
