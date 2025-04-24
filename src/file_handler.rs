@@ -8,9 +8,7 @@ use std::{
 };
 use toml::{de::from_str, ser::to_string};
 
-use crate::models::{
-    storage_type_to_string, ClipboardData, ClipboardEntry, HistoryData, HistoryEntry, StorageType,
-};
+use crate::models::{record_type_to_string, RecordData, RecordEntry, RecordType};
 
 // Static mutex to protect file access
 pub static CLIPBOARD_MUTEX: Mutex<()> = Mutex::new(());
@@ -22,8 +20,8 @@ pub fn get_config_dir() -> IoResult<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
-pub fn get_storage_path(storage_type: StorageType) -> IoResult<PathBuf> {
-    get_config_dir().map(|dir| dir.join(format!("{}.toml", storage_type_to_string(storage_type))))
+pub fn get_storage_path(record_type: RecordType) -> IoResult<PathBuf> {
+    get_config_dir().map(|dir| dir.join(format!("{}.toml", record_type_to_string(record_type))))
 }
 
 pub fn read_toml_file<T: DeserializeOwned>(
@@ -33,21 +31,24 @@ pub fn read_toml_file<T: DeserializeOwned>(
     let _lock = mutex.lock().unwrap();
 
     let mut file = match File::open(path) {
-        Ok(f) => f,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),
+        Ok(file) => file,
     };
 
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
 
     match from_str(&contents) {
-        Ok(parsed) => Ok(Some(parsed)),
         Err(e) => {
-            eprintln!("Error parsing TOML file '{}': {}", path.display(), e);
-            // Consider returning a default value or a specific error type here
+            eprintln!(
+                "Error: failed to parse TOML file '{}': {}",
+                path.display(),
+                e
+            );
             Ok(None)
         }
+        Ok(parsed) => Ok(Some(parsed)),
     }
 }
 
@@ -58,40 +59,40 @@ pub fn write_toml_file<T: Serialize>(
 ) -> IoResult<()> {
     let _lock = mutex.lock().unwrap(); // Acquire lock
     match to_string(&data) {
+        Err(e) => {
+            eprintln!("Error: failed to serialize to TOML string: {}", e);
+            Err(std::io::Error::new(ErrorKind::Other, e))
+        }
         Ok(toml_string) => {
             let mut file = File::create(path)?;
             file.write_all(toml_string.as_bytes())?;
             Ok(())
         }
-        Err(e) => {
-            eprintln!("Error serializing to TOML string: {}", e);
-            Err(std::io::Error::new(ErrorKind::Other, e))
-        }
     }
 }
 
-pub fn read_clipboard() -> IoResult<Option<Vec<ClipboardEntry>>> {
-    let path = get_storage_path(StorageType::Clipboard)?;
-    read_toml_file::<ClipboardData>(&path, &CLIPBOARD_MUTEX).map(|data| data.map(|d| d.entries))
+pub fn read_clipboard() -> IoResult<Option<Vec<RecordEntry>>> {
+    let path = get_storage_path(RecordType::Clipboard)?;
+    read_toml_file::<RecordData>(&path, &CLIPBOARD_MUTEX).map(|data| data.map(|d| d.entries))
 }
 
-pub fn read_history() -> IoResult<Option<Vec<HistoryEntry>>> {
-    let path = get_storage_path(StorageType::History)?;
-    read_toml_file::<HistoryData>(&path, &HISTORY_MUTEX).map(|data| data.map(|d| d.entries))
+pub fn read_history() -> IoResult<Option<Vec<RecordEntry>>> {
+    let path = get_storage_path(RecordType::History)?;
+    read_toml_file::<RecordData>(&path, &HISTORY_MUTEX).map(|data| data.map(|d| d.entries))
 }
 
-pub fn write_clipboard(entries: &[ClipboardEntry]) -> IoResult<()> {
-    let path = get_storage_path(StorageType::Clipboard)?;
-    let clipboard_data = ClipboardData {
+pub fn write_clipboard(entries: &[RecordEntry]) -> IoResult<()> {
+    let path = get_storage_path(RecordType::Clipboard)?;
+    let record_data = RecordData {
         entries: entries.to_vec(),
     };
-    write_toml_file(&path, &CLIPBOARD_MUTEX, clipboard_data)
+    write_toml_file(&path, &CLIPBOARD_MUTEX, record_data)
 }
 
-pub fn write_history(entries: &[HistoryEntry]) -> IoResult<()> {
-    let path = get_storage_path(StorageType::History)?;
-    let history_data = HistoryData {
+pub fn write_history(entries: &[RecordEntry]) -> IoResult<()> {
+    let path = get_storage_path(RecordType::History)?;
+    let record_data = RecordData {
         entries: entries.to_vec(),
     };
-    write_toml_file(&path, &HISTORY_MUTEX, history_data)
+    write_toml_file(&path, &HISTORY_MUTEX, record_data)
 }

@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, TimestampSeconds};
+use std::time::SystemTime;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Operation {
@@ -10,42 +12,44 @@ pub enum Operation {
 pub enum EntryType {
     File,
     Directory,
+    Symlink,
+}
+
+impl EntryType {
+    pub fn matches_metadata(&self, metadata: &std::fs::Metadata) -> bool {
+        match self {
+            EntryType::Directory => metadata.is_dir(),
+            EntryType::File => metadata.is_file(),
+            EntryType::Symlink => metadata.file_type().is_symlink(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
-pub enum StorageType {
+pub enum RecordType {
     Clipboard,
     History,
 }
 
-pub const fn storage_type_to_string(storage_type: StorageType) -> &'static str {
-    match storage_type {
-        StorageType::Clipboard => "clipboard",
-        StorageType::History => "history",
+pub const fn record_type_to_string(record_type: RecordType) -> &'static str {
+    match record_type {
+        RecordType::Clipboard => "clipboard",
+        RecordType::History => "history",
     }
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ClipboardEntry {
+pub struct RecordEntry {
+    #[serde_as(as = "TimestampSeconds")]
+    pub timestamp: SystemTime,
     pub operation: Operation,
     pub entry_type: EntryType,
     pub path: String,
-    pub timestamp: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct HistoryEntry {
-    entry_type: EntryType,
-    path: String,
-    timestamp: u64,
+    pub id: uuid::Uuid,
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct ClipboardData {
-    pub entries: Vec<ClipboardEntry>,
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct HistoryData {
-    pub entries: Vec<HistoryEntry>,
+pub struct RecordData {
+    pub entries: Vec<RecordEntry>,
 }

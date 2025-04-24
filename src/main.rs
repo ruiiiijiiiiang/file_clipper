@@ -1,81 +1,123 @@
-use std::{
-    env,
-    error::Error,
-    fs::metadata,
-    path::Path,
-    process,
-    time::{SystemTime, UNIX_EPOCH},
-};
-
-// Import the crates you'll be using
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use fs_extra::dir::copy as copy_dir;
-use fs_extra::file::copy as copy_file;
+use fs_extra::{copy_items, dir::CopyOptions, move_items};
 use ratatui::prelude::*;
 use shellexpand::tilde;
+use std::{
+    collections::VecDeque, env, error::Error, fs::metadata, io::ErrorKind, path::Path, process,
+    time::SystemTime,
+};
 use uuid::Uuid;
 
 mod models;
 use file_handler::{read_clipboard, read_history, write_clipboard, write_history};
 
 mod file_handler;
-use models::{ClipboardEntry, EntryType, HistoryEntry, Operation};
+use models::{EntryType, Operation, RecordEntry};
 
-fn get_current_timestamp() -> u64 {
-    let now = SystemTime::now();
-    now.duration_since(UNIX_EPOCH)
-        .expect("System time is before the Unix epoch!")
-        .as_secs()
-}
-
-fn handle_copy(args: &[String]) -> Result<(), Box<dyn Error>> {
-    let paths = &args[2..];
-    let mut clipboard_entries = read_clipboard()?.unwrap_or(vec![]);
+fn move_helper(paths: &[String], operation: Operation) -> Result<(), Box<dyn Error>> {
+    let mut clipboard_entries = VecDeque::from(read_clipboard()?.unwrap_or(vec![]));
     for path_str in paths {
         let path = Path::new(path_str);
         let absolute_path = if path.is_relative() {
-            match env::current_dir() {
-                Ok(cwd) => cwd.join(path).canonicalize()?,
-                Err(e) => return Err(e.into()),
-            }
+            let cwd = env::current_dir()?;
+            cwd.join(path).canonicalize()?
         } else {
             path.canonicalize()?
         };
-        match metadata(&absolute_path) {
-            Ok(metadata) => {
-                let entry_type = if metadata.is_dir() {
-                    EntryType::Directory
-                // } else if metadata.is_file() {
-                //     EntryType::File
-                } else {
-                    EntryType::File //TODO: Handle symlinks
-                };
-                clipboard_entries.push(ClipboardEntry {
-                    operation: Operation::Copy,
-                    entry_type,
-                    path: absolute_path.to_string_lossy().into_owned(),
-                    timestamp: get_current_timestamp(),
-                });
-            }
-            Err(e) => return Err(e.into()),
-        }
+        let metadata = metadata(&absolute_path)?;
+        let entry_type = if metadata.is_dir() {
+            EntryType::Directory
+        } else if metadata.is_symlink() {
+            EntryType::Symlink
+        } else if metadata.is_file() {
+            EntryType::File
+        } else {
+            eprintln!("Error: unsupported file type: {}", absolute_path.display());
+            continue;
+        };
+        clipboard_entries.push_front(RecordEntry {
+            operation: operation.clone(),
+            entry_type,
+            path: absolute_path.to_string_lossy().into_owned(),
+            timestamp: SystemTime::now(),
+            id: Uuid::new_v4(),
+        });
     }
+    let clipboard_entries: Vec<RecordEntry> = clipboard_entries.into();
     write_clipboard(&clipboard_entries)?;
+    for path in paths {
+        println!("Info: {:?} {}", operation, path);
+    }
     Ok(())
 }
 
-fn handle_cut(args: &[String]) -> Result<(), Box<dyn Error>> {
-    // Implement cut logic here using fs_extra, write path and "CUT" to clipboard
-    println!("Handling cut: {:?}", args);
-    Ok(())
+fn handle_copy(paths: &[String]) -> Result<(), Box<dyn Error>> {
+    move_helper(paths, Operation::Copy)
 }
 
-fn handle_paste(args: &[String]) -> Result<(), Box<dyn Error>> {
-    let clipboard = read_clipboard()?;
+fn handle_cut(paths: &[String]) -> Result<(), Box<dyn Error>> {
+    move_helper(paths, Operation::Cut)
+}
+
+fn handle_paste(path: &String) -> Result<(), Box<dyn Error>> {
+    let clipboard_entries = match read_clipboard() {
+        Err(e) => {
+            eprintln!("Error: failed to read clipboard: {}", e);
+            return Ok(());
+        }
+        Ok(Some(clipboard_entries)) if !clipboard_entries.is_empty() => clipboard_entries,
+        _ => {
+            println!("Info: clipboard is empty");
+            return Ok(());
+        }
+    };
+    println!("clipboard? {:?}", &clipboard_entries);
+
+    let mut history_entries = VecDeque::from(match read_history() {
+        Err(e) => {
+            eprintln!("Error: failed to read history: {}", e);
+            return Ok(());
+        }
+        Ok(None) => Vec::new(),
+        Ok(Some(history_entries)) => history_entries,
+    });
+
+    let options = CopyOptions::new();
+    for entry in clipboard_entries {
+        let metadata = match metadata(&entry.path) {
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                eprintln!("Error: {} no longer exists; skipping", entry.path);
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "Error: failed to get metadata for {}: {}; skipping",
+                    entry.path, e
+                );
+                continue;
+            }
+            Ok(metadata) => metadata,
+        };
+        if !entry.entry_type.matches_metadata(&metadata) {
+            eprintln!("Warning: {} does not match recorded entry type", entry.path);
+        }
+        if metadata.modified()? > entry.timestamp {
+            eprintln!("Warning: {} has been modified since copying", entry.path);
+        }
+        match entry.operation {
+            Operation::Copy => copy_items(&[&entry.path], path, &options)?,
+            Operation::Cut => move_items(&[&entry.path], path, &options)?,
+        };
+        println!("Pasted: {}", entry.path);
+        history_entries.push_front(entry.clone());
+    }
+    write_clipboard(&[])?;
+    let history_entries: Vec<RecordEntry> = history_entries.into();
+    write_history(&history_entries)?;
     Ok(())
 }
 
@@ -135,17 +177,37 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if args.len() < 2 {
         eprintln!("Usage: {} <command> [arguments]", args[0]);
-        eprintln!("Commands: copy <path>, cut <path>, paste, list");
+        eprintln!("Commands: copy <path>, cut <path>, paste, list, history");
         process::exit(1);
     }
 
     let command = &args[1];
 
     match command.as_str() {
-        "copy" => handle_copy(&args)?,
-        "cut" => handle_cut(&args)?,
-        "paste" => handle_paste(&args)?,
-        "list" => enter_tui_mode()?,
+        "copy" | "cp" | "y" => {
+            if args.len() < 3 {
+                eprintln!("Error: copy command requires at least one path");
+                process::exit(1);
+            }
+            handle_copy(&args[2..])?
+        }
+        "cut" | "mv" | "x" => {
+            if args.len() < 3 {
+                eprintln!("Error: cut command requires at least one path");
+                process::exit(1);
+            }
+            handle_cut(&args[2..])?
+        }
+        "paste" | "p" => {
+            let path = if args.len() < 3 {
+                env::current_dir()?.to_string_lossy().into_owned()
+            } else {
+                args[2].clone()
+            };
+            handle_paste(&path)?
+        }
+        "list" | "l" => enter_tui_mode()?,
+        "history" | "h" => enter_tui_mode()?,
         _ => {
             eprintln!("Unknown command: {}", command);
             eprintln!("Usage: {} <command> [arguments]", args[0]);

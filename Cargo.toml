@@ -13,6 +13,10 @@ tempfile = "3.19.1" # For creating temporary files
 fs_extra = "1.3.0" # For more advanced file system operations (copying with metadata)
 thiserror = "2.0.12" # For creating custom error types
 shellexpand = "3.1.1" # For expanding tilde in paths
-uuid = { version = "1.16", features = ["v4"] } # For generating unique filenames
+uuid = { version = "1.16", features = [
+  "v4",
+  "serde",
+] } # For generating unique filenames
 toml = "0.8.20"
 chrono = "0.4.40"
+serde_with = "3.12.0"
