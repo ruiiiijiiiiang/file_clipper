@@ -11,7 +11,13 @@ use ratatui::{
     Terminal,
 };
 use std::{
-    collections::VecDeque, env, error::Error, fs::metadata, io::ErrorKind, path::Path, process,
+    collections::VecDeque,
+    env,
+    error::Error,
+    fs::metadata,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    process,
     time::SystemTime,
 };
 use uuid::Uuid;
@@ -111,7 +117,7 @@ fn handle_paste(path: &String) -> Result<(), Box<dyn Error>> {
     });
 
     let options = CopyOptions::new();
-    for entry in clipboard_entries {
+    for mut entry in clipboard_entries {
         let metadata = match metadata(&entry.path) {
             Err(e) if e.kind() == ErrorKind::NotFound => {
                 eprintln!("[Error]: {} no longer exists; skipping", entry.path);
@@ -134,7 +140,20 @@ fn handle_paste(path: &String) -> Result<(), Box<dyn Error>> {
         }
         match entry.operation {
             Operation::Copy => copy_items(&[&entry.path], path, &options)?,
-            Operation::Cut => move_items(&[&entry.path], path, &options)?,
+            Operation::Cut => {
+                move_items(&[&entry.path], path, &options)?;
+                let file_name = Path::new(&entry.path).file_name().unwrap();
+                let new_path = PathBuf::from(path);
+                let mut absolute_path = if new_path.is_relative() {
+                    let cwd = env::current_dir()?;
+                    cwd.join(new_path)
+                } else {
+                    new_path
+                };
+                absolute_path.push(file_name);
+                entry.path = absolute_path.to_string_lossy().into_owned();
+                0 // Return 0 to make branches have the same type
+            }
         };
         println!("Pasted: {}", entry.path);
         history_entries.push_front(entry.clone());
