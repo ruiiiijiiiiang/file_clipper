@@ -1,3 +1,4 @@
+use chrono::{DateTime, Local};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -7,6 +8,7 @@ use fs_extra::{copy_items, dir::CopyOptions, move_items};
 use ratatui::{
     backend::CrosstermBackend,
     style::{Color, Style},
+    text::Line,
     widgets::{Block, Borders, List, ListItem},
     Terminal,
 };
@@ -26,18 +28,22 @@ mod models;
 use file_handler::{read_clipboard, read_history, write_clipboard, write_history};
 
 mod file_handler;
-use models::{EntryType, Operation, RecordEntry};
+use models::{EntryType, Operation, RecordEntry, TuiMode};
+
+fn get_absolute_path(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    if path.is_relative() {
+        let cwd = env::current_dir()?;
+        Ok(cwd.join(path).canonicalize()?)
+    } else {
+        Ok(path.canonicalize()?)
+    }
+}
 
 fn move_helper(paths: &[String], operation: Operation) -> Result<(), Box<dyn Error>> {
     let mut clipboard_entries = VecDeque::from(read_clipboard()?.unwrap_or(vec![]));
     for path_str in paths {
         let path = Path::new(path_str);
-        let absolute_path = if path.is_relative() {
-            let cwd = env::current_dir()?;
-            cwd.join(path).canonicalize()?
-        } else {
-            path.canonicalize()?
-        };
+        let absolute_path = get_absolute_path(path)?;
         println!("{}", absolute_path.display());
         let metadata = match metadata(&absolute_path) {
             Err(e) if e.kind() == ErrorKind::NotFound => {
@@ -144,18 +150,14 @@ fn handle_paste(path: &String) -> Result<(), Box<dyn Error>> {
                 move_items(&[&entry.path], path, &options)?;
                 let file_name = Path::new(&entry.path).file_name().unwrap();
                 let new_path = PathBuf::from(path);
-                let mut absolute_path = if new_path.is_relative() {
-                    let cwd = env::current_dir()?;
-                    cwd.join(new_path)
-                } else {
-                    new_path
-                };
+                let mut absolute_path = get_absolute_path(&new_path)?;
                 absolute_path.push(file_name);
                 entry.path = absolute_path.to_string_lossy().into_owned();
                 0 // Return 0 to make branches have the same type
             }
         };
         println!("Pasted: {}", entry.path);
+        entry.timestamp = SystemTime::now();
         history_entries.push_front(entry.clone());
     }
     write_clipboard(&[])?;
@@ -164,16 +166,25 @@ fn handle_paste(path: &String) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn enter_tui_mode() -> Result<(), Box<dyn Error>> {
+fn enter_tui_mode(mode: TuiMode) -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let entries = read_history()?.unwrap_or(vec![]);
+    let entries = match mode {
+        TuiMode::Clipboard => read_clipboard()?.unwrap_or(vec![]),
+        TuiMode::History => read_history()?.unwrap_or(vec![]),
+    };
     if entries.is_empty() {
-        println!("[Info]: history is empty");
+        println!(
+            "[Info]: {} is empty",
+            match mode {
+                TuiMode::Clipboard => "clipboard",
+                TuiMode::History => "history",
+            }
+        );
         return Ok(());
     }
     let mut selected = 0;
@@ -192,7 +203,12 @@ fn enter_tui_mode() -> Result<(), Box<dyn Error>> {
                         } else {
                             Style::default()
                         };
-                        ListItem::new(entry.path.clone()).style(style)
+                        let datetime: DateTime<Local> = entry.timestamp.into();
+                        let line = Line::styled(
+                            format!("{}    {}", entry.path, datetime.to_rfc2822()),
+                            style,
+                        );
+                        ListItem::new(line)
                     })
                     .collect();
 
@@ -269,8 +285,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             };
             handle_paste(&path)?
         }
-        "list" | "l" => enter_tui_mode()?,
-        "history" | "h" => enter_tui_mode()?,
+        "list" | "l" => enter_tui_mode(TuiMode::Clipboard)?,
+        "history" | "h" => enter_tui_mode(TuiMode::History)?,
         _ => {
             eprintln!("Unknown command: {}", command);
             eprintln!("Usage: {} <command> [arguments]", args[0]);

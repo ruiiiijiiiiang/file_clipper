@@ -53,3 +53,9 @@ pub struct RecordEntry {
 pub struct RecordData {
     pub entries: Vec<RecordEntry>,
 }
+
+#[derive(Debug, Clone)]
+pub enum TuiMode {
+    Clipboard,
+    History,
+}
