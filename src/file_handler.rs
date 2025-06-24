@@ -1,98 +1,166 @@
-use serde::{de::DeserializeOwned, Serialize};
-use shellexpand::tilde;
+use fs_extra::{copy_items, dir::CopyOptions, move_items};
 use std::{
-    fs::{create_dir_all, File},
-    io::{ErrorKind, Read, Result as IoResult, Write},
-    path::PathBuf,
-    sync::Mutex,
+    collections::VecDeque,
+    env,
+    error::Error,
+    fs::metadata,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    time::SystemTime,
 };
-use toml::{de::from_str, ser::to_string};
+use uuid::Uuid;
 
-use crate::models::{record_type_to_string, RecordData, RecordEntry, RecordType};
+use crate::models::{EntryType, Operation, RecordEntry};
 
-// Static mutex to protect file access
-pub static CLIPBOARD_MUTEX: Mutex<()> = Mutex::new(());
-pub static HISTORY_MUTEX: Mutex<()> = Mutex::new(());
+use crate::record_handler::{read_clipboard, read_history, write_clipboard, write_history};
 
-pub fn get_config_dir() -> IoResult<PathBuf> {
-    let path = tilde("~/.local/state/file_clipper").into_owned();
-    create_dir_all(&path)?;
-    Ok(PathBuf::from(path))
+pub fn handle_copy(paths: Vec<PathBuf>) -> Result<(), Box<dyn Error>> {
+    move_helper(paths, Operation::Copy)
 }
 
-pub fn get_storage_path(record_type: RecordType) -> IoResult<PathBuf> {
-    get_config_dir().map(|dir| dir.join(format!("{}.toml", record_type_to_string(record_type))))
+pub fn handle_cut(paths: Vec<PathBuf>) -> Result<(), Box<dyn Error>> {
+    move_helper(paths, Operation::Cut)
 }
 
-pub fn read_toml_file<T: DeserializeOwned>(
-    path: &PathBuf,
-    mutex: &'static Mutex<()>,
-) -> IoResult<Option<T>> {
-    let _lock = mutex.lock().unwrap();
-
-    let mut file = match File::open(path) {
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
-        Ok(file) => file,
+pub fn handle_paste(destination_path: PathBuf) -> Result<(), Box<dyn Error>> {
+    let clipboard_entries = match read_clipboard() {
+        Err(error) => {
+            eprintln!("[Error]: failed to read clipboard: {}", error);
+            return Ok(());
+        }
+        Ok(Some(clipboard_entries)) if !clipboard_entries.is_empty() => clipboard_entries,
+        _ => {
+            println!("[Info]: clipboard is empty");
+            return Ok(());
+        }
     };
 
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
+    let mut history_entries = VecDeque::from(match read_history() {
+        Err(error) => {
+            eprintln!("[Error]: failed to read history: {}", error);
+            return Ok(());
+        }
+        Ok(None) => Vec::new(),
+        Ok(Some(history_entries)) => history_entries,
+    });
 
-    match from_str(&contents) {
-        Err(e) => {
+    let options = CopyOptions::new();
+    for mut entry in clipboard_entries {
+        let metadata = match metadata(&entry.path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                eprintln!(
+                    "[Error]: {} no longer exists; skipping",
+                    entry.path.display()
+                );
+                continue;
+            }
+            Err(error) => {
+                eprintln!(
+                    "[Error]: failed to get metadata for {}: {}; skipping",
+                    entry.path.display(),
+                    error
+                );
+                continue;
+            }
+            Ok(metadata) => metadata,
+        };
+        if !entry.entry_type.matches_metadata(&metadata) {
             eprintln!(
-                "Error: failed to parse TOML file '{}': {}",
-                path.display(),
-                e
+                "Warning: {} does not match recorded entry type",
+                entry.path.display()
             );
-            Ok(None)
         }
-        Ok(parsed) => Ok(Some(parsed)),
+        if metadata.modified()? > entry.timestamp {
+            eprintln!(
+                "Warning: {} has been modified since copying",
+                entry.path.display()
+            );
+        }
+        match entry.operation {
+            Operation::Copy => copy_items(&[&entry.path], &destination_path, &options)?,
+            Operation::Cut => {
+                move_items(&[&entry.path], &destination_path, &options)?;
+                let file_name = Path::new(&entry.path).file_name().unwrap();
+                let new_path = PathBuf::from(&destination_path);
+                let mut absolute_path = get_absolute_path(&new_path)?;
+                absolute_path.push(file_name);
+                entry.path = absolute_path;
+                0 // Return 0 to make branches have the same type
+            }
+        };
+        println!("Pasted: {}", entry.path.display());
+        entry.timestamp = SystemTime::now();
+        history_entries.push_front(entry.clone());
+    }
+    write_clipboard(&[])?;
+    let history_entries: Vec<RecordEntry> = history_entries.into();
+    write_history(&history_entries)?;
+    Ok(())
+}
+
+fn get_absolute_path(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    if path.is_relative() {
+        let cwd = env::current_dir()?;
+        Ok(cwd.join(path).canonicalize()?)
+    } else {
+        Ok(path.canonicalize()?)
     }
 }
 
-pub fn write_toml_file<T: Serialize>(
-    path: &PathBuf,
-    mutex: &'static Mutex<()>,
-    data: T,
-) -> IoResult<()> {
-    let _lock = mutex.lock().unwrap(); // Acquire lock
-    match to_string(&data) {
-        Err(e) => {
-            eprintln!("Error: failed to serialize to TOML string: {}", e);
-            Err(std::io::Error::new(ErrorKind::Other, e))
-        }
-        Ok(toml_string) => {
-            let mut file = File::create(path)?;
-            file.write_all(toml_string.as_bytes())?;
-            Ok(())
-        }
+fn move_helper(paths: Vec<PathBuf>, operation: Operation) -> Result<(), Box<dyn Error>> {
+    let mut clipboard_entries = VecDeque::from(read_clipboard()?.unwrap_or(vec![]));
+    for path in &paths {
+        let absolute_path = get_absolute_path(path)?;
+        println!("{}", absolute_path.display());
+        let metadata = match metadata(&absolute_path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                eprintln!(
+                    "[Error]: {} does not exist; skipping",
+                    absolute_path.display()
+                );
+                continue;
+            }
+            Err(error) => {
+                eprintln!(
+                    "[Error]: failed to get metadata for {}: {}",
+                    absolute_path.display(),
+                    error
+                );
+                continue;
+            }
+            Ok(metadata) => metadata,
+        };
+        let entry_type = if metadata.is_dir() {
+            EntryType::Directory
+        } else if metadata.is_symlink() {
+            EntryType::Symlink
+        } else if metadata.is_file() {
+            EntryType::File
+        } else {
+            eprintln!(
+                "[Error]: unsupported file type: {}",
+                absolute_path.display()
+            );
+            continue;
+        };
+        let size = if entry_type == EntryType::Directory {
+            None
+        } else {
+            Some(metadata.len())
+        };
+        clipboard_entries.push_front(RecordEntry {
+            operation: operation.clone(),
+            size,
+            entry_type,
+            path: absolute_path,
+            timestamp: SystemTime::now(),
+            id: Uuid::new_v4(),
+        });
     }
-}
-
-pub fn read_clipboard() -> IoResult<Option<Vec<RecordEntry>>> {
-    let path = get_storage_path(RecordType::Clipboard)?;
-    read_toml_file::<RecordData>(&path, &CLIPBOARD_MUTEX).map(|data| data.map(|d| d.entries))
-}
-
-pub fn read_history() -> IoResult<Option<Vec<RecordEntry>>> {
-    let path = get_storage_path(RecordType::History)?;
-    read_toml_file::<RecordData>(&path, &HISTORY_MUTEX).map(|data| data.map(|d| d.entries))
-}
-
-pub fn write_clipboard(entries: &[RecordEntry]) -> IoResult<()> {
-    let path = get_storage_path(RecordType::Clipboard)?;
-    let record_data = RecordData {
-        entries: entries.to_vec(),
-    };
-    write_toml_file(&path, &CLIPBOARD_MUTEX, record_data)
-}
-
-pub fn write_history(entries: &[RecordEntry]) -> IoResult<()> {
-    let path = get_storage_path(RecordType::History)?;
-    let record_data = RecordData {
-        entries: entries.to_vec(),
-    };
-    write_toml_file(&path, &HISTORY_MUTEX, record_data)
+    let clipboard_entries: Vec<RecordEntry> = clipboard_entries.into();
+    write_clipboard(&clipboard_entries)?;
+    for path in paths {
+        println!("[Info]: {:?} {}", operation, path.display());
+    }
+    Ok(())
 }
