@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, TimestampSeconds};
 use std::{path::PathBuf, time::SystemTime};
-
 use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Operation {
@@ -21,8 +21,8 @@ impl EntryType {
     pub fn matches_metadata(&self, metadata: &std::fs::Metadata) -> bool {
         match self {
             EntryType::Directory => metadata.is_dir(),
-            EntryType::File => metadata.is_file(),
             EntryType::Symlink => metadata.file_type().is_symlink(),
+            EntryType::File => metadata.is_file(),
         }
     }
 }
@@ -49,7 +49,7 @@ pub struct RecordEntry {
     pub operation: Operation,
     pub entry_type: EntryType,
     pub path: PathBuf,
-    pub id: uuid::Uuid,
+    pub id: Uuid,
 }
 
 #[derive(Deserialize, Serialize)]

@@ -11,10 +11,10 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem},
     Terminal,
 };
-use std::error::Error;
+use std::{env, error::Error};
 
-use crate::models::TuiMode;
-
+use crate::file_handler::{handle_paste, handle_remove};
+use crate::models::{Operation, TuiMode};
 use crate::record_handler::{read_clipboard, read_history};
 
 const PATH_WIDTH: usize = 50;
@@ -44,7 +44,7 @@ pub fn enter_tui_mode(mode: TuiMode) -> Result<(), Box<dyn Error>> {
     let mut highlighted = 0;
     let mut selected = vec![false; entries.len()];
 
-    let mut run_app = || -> Result<(), Box<dyn Error>> {
+    let run_app = || -> Result<(), Box<dyn Error>> {
         loop {
             terminal.draw(|f| {
                 let area = f.area();
@@ -80,7 +80,18 @@ pub fn enter_tui_mode(mode: TuiMode) -> Result<(), Box<dyn Error>> {
                         };
                         let timestamp_span = Span::styled(timestamp_display, style);
 
-                        let line = Line::from(vec![selected_span, path_span, timestamp_span]);
+                        let operation_display = match entry.operation {
+                            Operation::Copy => "<Copied> ",
+                            Operation::Cut => "<Cut> ",
+                        };
+                        let operation_span = Span::styled(operation_display, style);
+
+                        let line = Line::from(vec![
+                            selected_span,
+                            path_span,
+                            timestamp_span,
+                            operation_span,
+                        ]);
                         ListItem::new(line)
                     })
                     .collect();
@@ -96,9 +107,28 @@ pub fn enter_tui_mode(mode: TuiMode) -> Result<(), Box<dyn Error>> {
                 if let Event::Key(key) = event::read()? {
                     match key.code {
                         KeyCode::Char('q') => break,
-                        KeyCode::Char('x') => selected[highlighted] = !selected[highlighted],
+                        KeyCode::Char('x') => handle_remove(entries[highlighted].id)?,
+                        KeyCode::Char(' ') => selected[highlighted] = !selected[highlighted],
                         KeyCode::Char('j') => {
                             highlighted = (highlighted + 1).min(entries.len() - 1)
+                        }
+                        KeyCode::Char('p') => {
+                            let destination_path = env::current_dir()?;
+                            let selected_entries = entries
+                                .into_iter()
+                                .zip(selected)
+                                .filter_map(
+                                    |(entry, selected)| {
+                                        if selected {
+                                            Some(entry)
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                )
+                                .collect();
+                            handle_paste(destination_path, Some(selected_entries))?;
+                            break;
                         }
                         KeyCode::Char('k') => highlighted = highlighted.saturating_sub(1),
                         _ => {}
