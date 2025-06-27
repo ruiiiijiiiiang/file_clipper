@@ -1,47 +1,42 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, TimestampSeconds};
-use std::{path::PathBuf, time::SystemTime};
+use std::{io::Error as IoError, path::PathBuf, time::SystemTime};
+use strum_macros::Display;
 use thiserror::Error;
 use uuid::Uuid;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+use crate::utils::get_metadata;
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Operation {
     Copy,
     Cut,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EntryType {
     File,
     Directory,
     Symlink,
 }
 
-impl EntryType {
-    pub fn matches_metadata(&self, metadata: &std::fs::Metadata) -> bool {
-        match self {
-            EntryType::Directory => metadata.is_dir(),
-            EntryType::Symlink => metadata.file_type().is_symlink(),
-            EntryType::File => metadata.is_file(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Display)]
 pub enum RecordType {
+    #[strum(to_string = "clipboard")]
     Clipboard,
+    #[strum(to_string = "history")]
     History,
 }
 
-pub const fn record_type_to_string(record_type: RecordType) -> &'static str {
-    match record_type {
-        RecordType::Clipboard => "clipboard",
-        RecordType::History => "history",
-    }
+pub struct Metadata {
+    pub modified: SystemTime,
+    pub size: Option<u64>,
+    pub entry_type: EntryType,
+    pub absolute_path: PathBuf,
 }
 
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RecordEntry {
     #[serde_as(as = "TimestampSeconds")]
     pub timestamp: SystemTime,
@@ -52,7 +47,58 @@ pub struct RecordEntry {
     pub id: Uuid,
 }
 
-#[derive(Deserialize, Serialize)]
+impl RecordEntry {
+    pub fn check_validity(&self) -> Result<Option<ValidityWarning>, ValidityError> {
+        let Metadata {
+            modified,
+            size,
+            entry_type,
+            absolute_path,
+        } = get_metadata(&self.path)?;
+
+        if entry_type != self.entry_type {
+            return Ok(Some(ValidityWarning::Type(absolute_path)));
+        }
+
+        if let (Some(expected_size), Some(self_size)) = (size, self.size) {
+            if self_size != expected_size {
+                return Ok(Some(ValidityWarning::Size(absolute_path)));
+            }
+        }
+
+        if modified > self.timestamp {
+            return Ok(Some(ValidityWarning::Modified(absolute_path)));
+        }
+
+        Ok(None)
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ValidityError {
+    #[error("{0:?} is not found")]
+    PathNotFound(PathBuf),
+    #[error("failed to get absolute path for {0:?}: {1}")]
+    AbsolutePathError(PathBuf, IoError),
+    #[error("failed to get metadata path for {0:?}: {1}")]
+    MetadataError(PathBuf, IoError),
+    #[error("failed to get modified timestamp for {0:?}: {1}")]
+    ModifiedAccessError(PathBuf, IoError),
+    #[error("{0:?} is unsupported file type")]
+    UnsupportedType(PathBuf),
+}
+
+#[derive(Debug, Display)]
+pub enum ValidityWarning {
+    #[strum(to_string = "{0:?} was modified after last access")]
+    Modified(PathBuf),
+    #[strum(to_string = "{0:?} has changed in type")]
+    Type(PathBuf),
+    #[strum(to_string = "{0:?} has changed in size")]
+    Size(PathBuf),
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct RecordData {
     pub entries: Vec<RecordEntry>,
 }
@@ -67,16 +113,15 @@ pub enum Action {
     Help,
 }
 
-#[derive(Debug, Clone)]
-pub enum TuiMode {
-    Clipboard,
-    History,
+#[derive(Debug, Error)]
+pub enum InputError {
+    #[error("missing argument: {0}")]
+    MissingArgument(String),
+    #[error("invalid command: {0}")]
+    InvalidCommand(String),
 }
 
-#[derive(Error, Debug)]
-pub enum InputError {
-    #[error("Missing required argument: {0}")]
-    MissingArgument(String),
-    #[error("Invalid command: '{0}'. Type 'help' for available commands.")]
-    InvalidCommand(String),
+pub struct PasteContent {
+    pub entries: Vec<RecordEntry>,
+    pub source: RecordType,
 }

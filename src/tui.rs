@@ -14,13 +14,14 @@ use ratatui::{
 use std::{env, error::Error};
 
 use crate::file_handler::{handle_paste, handle_remove};
-use crate::models::{Operation, TuiMode};
+use crate::models::{Operation, PasteContent, RecordType};
 use crate::record_handler::{read_clipboard, read_history};
+use crate::utils::get_metadata;
 
 const PATH_WIDTH: usize = 50;
 const TIMESTAMP_WIDTH: usize = 40;
 
-pub fn enter_tui_mode(mode: TuiMode) -> Result<(), Box<dyn Error>> {
+pub fn enter_tui_mode(mode: RecordType) -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -28,20 +29,15 @@ pub fn enter_tui_mode(mode: TuiMode) -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let entries = match mode {
-        TuiMode::Clipboard => read_clipboard()?.unwrap_or(vec![]),
-        TuiMode::History => read_history()?.unwrap_or(vec![]),
+        RecordType::Clipboard => read_clipboard()?.unwrap_or(vec![]),
+        RecordType::History => read_history()?.unwrap_or(vec![]),
     };
     if entries.is_empty() {
-        println!(
-            "[Info]: {} is empty",
-            match mode {
-                TuiMode::Clipboard => "clipboard",
-                TuiMode::History => "history",
-            }
-        );
+        println!("[Info]: {} is empty", mode);
         return Ok(());
     }
     let mut highlighted = 0;
+    let mut invalid = vec![false; entries.len()];
     let mut selected = vec![false; entries.len()];
 
     let run_app = || -> Result<(), Box<dyn Error>> {
@@ -53,7 +49,12 @@ pub fn enter_tui_mode(mode: TuiMode) -> Result<(), Box<dyn Error>> {
                     .iter()
                     .enumerate()
                     .map(|(i, entry)| {
-                        let style = if i == highlighted {
+                        let valid = get_metadata(&entry.path).is_ok();
+                        invalid[i] = !valid;
+
+                        let style = if !valid {
+                            Style::default().bg(Color::Gray)
+                        } else if i == highlighted {
                             Style::default().bg(Color::Blue)
                         } else {
                             Style::default()
@@ -107,8 +108,16 @@ pub fn enter_tui_mode(mode: TuiMode) -> Result<(), Box<dyn Error>> {
                 if let Event::Key(key) = event::read()? {
                     match key.code {
                         KeyCode::Char('q') => break,
-                        KeyCode::Char('x') => handle_remove(entries[highlighted].id)?,
-                        KeyCode::Char(' ') => selected[highlighted] = !selected[highlighted],
+                        KeyCode::Char('x') => {
+                            if mode == RecordType::Clipboard && !invalid[highlighted] {
+                                handle_remove(entries[highlighted].id)?;
+                            }
+                        }
+                        KeyCode::Char(' ') => {
+                            if !invalid[highlighted] {
+                                selected[highlighted] = !selected[highlighted];
+                            }
+                        }
                         KeyCode::Char('j') => {
                             highlighted = (highlighted + 1).min(entries.len() - 1)
                         }
@@ -127,7 +136,11 @@ pub fn enter_tui_mode(mode: TuiMode) -> Result<(), Box<dyn Error>> {
                                     },
                                 )
                                 .collect();
-                            handle_paste(destination_path, Some(selected_entries))?;
+                            let paste_content = PasteContent {
+                                entries: selected_entries,
+                                source: mode,
+                            };
+                            handle_paste(destination_path, Some(paste_content))?;
                             break;
                         }
                         KeyCode::Char('k') => highlighted = highlighted.saturating_sub(1),

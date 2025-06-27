@@ -1,60 +1,26 @@
 use fs_extra::{copy_items, dir::CopyOptions, move_items};
 use std::{
-    collections::VecDeque,
-    env,
+    collections::{HashSet, VecDeque},
     error::Error,
-    fs::metadata,
-    io::ErrorKind,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::SystemTime,
 };
 use uuid::Uuid;
 
-use crate::models::{EntryType, Operation, RecordEntry};
-
+use crate::models::{Metadata, Operation, PasteContent, RecordEntry, RecordType};
 use crate::record_handler::{read_clipboard, read_history, write_clipboard, write_history};
+use crate::utils::{get_absolute_path, get_metadata};
 
 pub fn handle_transfer(paths: Vec<PathBuf>, operation: Operation) -> Result<(), Box<dyn Error>> {
     let mut clipboard_entries = VecDeque::from(read_clipboard()?.unwrap_or(vec![]));
     for path in &paths {
-        let absolute_path = get_absolute_path(path)?;
-        println!("{}", absolute_path.display());
-        let metadata = match metadata(&absolute_path) {
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                eprintln!(
-                    "[Error]: {} does not exist; skipping",
-                    absolute_path.display()
-                );
-                continue;
-            }
-            Err(error) => {
-                eprintln!(
-                    "[Error]: failed to get metadata for {}: {}",
-                    absolute_path.display(),
-                    error
-                );
-                continue;
-            }
-            Ok(metadata) => metadata,
-        };
-        let entry_type = if metadata.is_dir() {
-            EntryType::Directory
-        } else if metadata.is_symlink() {
-            EntryType::Symlink
-        } else if metadata.is_file() {
-            EntryType::File
-        } else {
-            eprintln!(
-                "[Error]: unsupported file type: {}",
-                absolute_path.display()
-            );
-            continue;
-        };
-        let size = if entry_type == EntryType::Directory {
-            None
-        } else {
-            Some(metadata.len())
-        };
+        let Metadata {
+            size,
+            entry_type,
+            absolute_path,
+            modified: _,
+        } = get_metadata(path)?;
+
         clipboard_entries.push_front(RecordEntry {
             operation: operation.clone(),
             size,
@@ -74,63 +40,69 @@ pub fn handle_transfer(paths: Vec<PathBuf>, operation: Operation) -> Result<(), 
 
 pub fn handle_paste(
     destination_path: PathBuf,
-    entries: Option<Vec<RecordEntry>>,
+    paste_content: Option<PasteContent>,
 ) -> Result<(), Box<dyn Error>> {
-    let clipboard_entries = match entries {
-        None => read_clipboard()?.unwrap_or(vec![]),
-        Some(entries) => entries,
+    let destination_path = get_absolute_path(&destination_path)?;
+    let clipboard_entries = read_clipboard()?.unwrap_or(Vec::new());
+    let (entries_to_paste, entries_remaining) = match paste_content {
+        // If no entries are provided, use the clipboard
+        None => {
+            let (valid_entries, invalid_entries) = filter_invalid_entries(&clipboard_entries);
+            (valid_entries, Some(invalid_entries))
+        }
+        // If entries are provided, remove them from the clipboard
+        Some(content) => {
+            let PasteContent {
+                entries: pasted_entries,
+                source,
+            } = content;
+            match source {
+                RecordType::History => {
+                    let (valid_entries, _) = filter_invalid_entries(&clipboard_entries);
+                    (valid_entries, None)
+                }
+                RecordType::Clipboard => {
+                    let (valid_entries, invalid_entries) = filter_invalid_entries(&pasted_entries);
+                    let pasted_entry_ids: HashSet<Uuid> =
+                        pasted_entries.iter().map(|entry| entry.id).collect();
+                    let invalid_entry_ids: HashSet<Uuid> =
+                        invalid_entries.iter().map(|entry| entry.id).collect();
+                    let entries_remaining = clipboard_entries
+                        .iter()
+                        .filter(|entry| {
+                            !pasted_entry_ids.contains(&entry.id)
+                                || invalid_entry_ids.contains(&entry.id)
+                        })
+                        .cloned()
+                        .collect();
+                    (valid_entries, Some(entries_remaining))
+                }
+            }
+        }
     };
     let mut history_entries = VecDeque::from(read_history()?.unwrap_or(vec![]));
 
     let options = CopyOptions::new();
-    for mut entry in clipboard_entries {
-        let metadata = match metadata(&entry.path) {
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                eprintln!(
-                    "[Error]: {} no longer exists; skipping",
-                    entry.path.display()
-                );
-                continue;
-            }
-            Err(error) => {
-                eprintln!(
-                    "[Error]: failed to get metadata for {}: {}; skipping",
-                    entry.path.display(),
-                    error
-                );
-                continue;
-            }
-            Ok(metadata) => metadata,
-        };
-        if !entry.entry_type.matches_metadata(&metadata) {
-            eprintln!(
-                "Warning: {} does not match recorded entry type",
-                entry.path.display()
-            );
-        }
-        if metadata.modified()? > entry.timestamp {
-            eprintln!(
-                "Warning: {} has been modified since copying",
-                entry.path.display()
-            );
-        }
+    for mut entry in entries_to_paste {
         match entry.operation {
             Operation::Copy => copy_items(&[&entry.path], &destination_path, &options)?,
             Operation::Cut => {
                 move_items(&[&entry.path], &destination_path, &options)?;
-                let file_name = Path::new(&entry.path).file_name().unwrap();
-                let new_path = PathBuf::from(&destination_path);
-                let mut absolute_path = get_absolute_path(&new_path)?;
-                absolute_path.push(file_name);
-                entry.path = absolute_path;
+                let file_name = entry.path.file_name().unwrap();
+                let mut new_path = destination_path.clone();
+                new_path.push(file_name);
+                entry.path = new_path;
                 0 // Return 0 to make branches have the same type
             }
         };
-        println!("Pasted: {}", entry.path.display());
+        println!("[Info]: paste {}", entry.path.display());
         entry.timestamp = SystemTime::now();
         history_entries.push_front(entry.clone());
     }
-    write_clipboard(&[])?; // TODO: handle left over
+
+    if let Some(entries) = entries_remaining {
+        write_clipboard(&entries)?
+    }
     let history_entries: Vec<RecordEntry> = history_entries.into();
     write_history(&history_entries)?;
     Ok(())
@@ -144,12 +116,12 @@ pub fn handle_remove(id: Uuid) -> Result<(), Box<dyn Error>> {
             return Ok(());
         }
     };
-    let clipboard_length = clipboard_entries.len();
     let filtered_entries: Vec<RecordEntry> = clipboard_entries
-        .into_iter()
+        .iter()
         .filter(|entry| entry.id != id)
+        .cloned()
         .collect();
-    if filtered_entries.len() == clipboard_length {
+    if filtered_entries.len() == clipboard_entries.len() {
         println!("[Error]: no entry found");
     } else {
         write_clipboard(&filtered_entries)?
@@ -157,11 +129,20 @@ pub fn handle_remove(id: Uuid) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn get_absolute_path(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
-    if path.is_relative() {
-        let cwd = env::current_dir()?;
-        Ok(cwd.join(path).canonicalize()?)
-    } else {
-        Ok(path.canonicalize()?)
-    }
+fn filter_invalid_entries(entries: &[RecordEntry]) -> (Vec<RecordEntry>, Vec<RecordEntry>) {
+    entries.iter().cloned().partition(|entry| {
+        let validity = entry.check_validity();
+        match validity {
+            Ok(warning) => {
+                if let Some(warning) = warning {
+                    eprintln!("[Warning]: {}", warning);
+                }
+                true
+            }
+            Err(error) => {
+                eprintln!("[Error]: {}", error);
+                false
+            }
+        }
+    })
 }

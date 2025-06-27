@@ -8,21 +8,13 @@ use std::{
 };
 use toml::{de::from_str, ser::to_string};
 
-use crate::models::{record_type_to_string, RecordData, RecordEntry, RecordType};
+use crate::models::{RecordData, RecordEntry, RecordType};
 
 // Static mutex to protect file access
-pub static CLIPBOARD_MUTEX: Mutex<()> = Mutex::new(());
-pub static HISTORY_MUTEX: Mutex<()> = Mutex::new(());
+static CLIPBOARD_MUTEX: Mutex<()> = Mutex::new(());
+static HISTORY_MUTEX: Mutex<()> = Mutex::new(());
 
-pub fn get_config_dir() -> IoResult<PathBuf> {
-    let path = tilde("~/.local/state/file_clipper").into_owned();
-    create_dir_all(&path)?;
-    Ok(PathBuf::from(path))
-}
-
-pub fn get_storage_path(record_type: RecordType) -> IoResult<PathBuf> {
-    get_config_dir().map(|dir| dir.join(format!("{}.toml", record_type_to_string(record_type))))
-}
+const STORAGE_DIR: &str = "~/.local/state/file_clipper";
 
 pub fn read_toml_file<T: DeserializeOwned>(
     path: &PathBuf,
@@ -95,4 +87,14 @@ pub fn write_history(entries: &[RecordEntry]) -> IoResult<()> {
         entries: entries.to_vec(),
     };
     write_toml_file(&path, &HISTORY_MUTEX, record_data)
+}
+
+fn get_config_dir() -> IoResult<PathBuf> {
+    let path = tilde(STORAGE_DIR).into_owned();
+    create_dir_all(&path)?;
+    Ok(PathBuf::from(path))
+}
+
+fn get_storage_path(record_type: RecordType) -> IoResult<PathBuf> {
+    get_config_dir().map(|dir| dir.join(format!("{}.toml", record_type)))
 }
