@@ -1,4 +1,5 @@
 use fs_extra::{copy_items, dir::CopyOptions, move_items};
+use glob::glob;
 use std::{
     collections::{HashSet, VecDeque},
     error::Error,
@@ -13,7 +14,8 @@ use crate::utils::{get_absolute_path, get_metadata};
 
 pub fn handle_transfer(paths: Vec<PathBuf>, operation: Operation) -> Result<(), Box<dyn Error>> {
     let mut clipboard_entries = VecDeque::from(read_clipboard()?.unwrap_or(vec![]));
-    for path in &paths {
+    let expand_paths = expand_paths(paths)?;
+    for path in &expand_paths {
         let Metadata {
             size,
             entry_type,
@@ -32,7 +34,7 @@ pub fn handle_transfer(paths: Vec<PathBuf>, operation: Operation) -> Result<(), 
     }
     let clipboard_entries: Vec<RecordEntry> = clipboard_entries.into();
     write_clipboard(&clipboard_entries)?;
-    for path in paths {
+    for path in expand_paths {
         println!("[Info]: {:?} {}", operation, path.display());
     }
     Ok(())
@@ -96,7 +98,6 @@ pub fn handle_paste(
             }
         };
         println!("[Info]: paste {}", entry.path.display());
-        entry.timestamp = SystemTime::now();
         history_entries.push_front(entry.clone());
     }
 
@@ -145,4 +146,44 @@ fn filter_invalid_entries(entries: &[RecordEntry]) -> (Vec<RecordEntry>, Vec<Rec
             }
         }
     })
+}
+
+fn expand_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let mut expanded = Vec::new();
+
+    for path in paths {
+        let path_str = path.to_string_lossy();
+
+        if path_str.contains('*') || path_str.contains('?') || path_str.contains('[') {
+            match glob(&path_str) {
+                Ok(entries) => {
+                    let mut matched_paths: Vec<PathBuf> = entries
+                        .filter_map(|entry| match entry {
+                            Ok(path) => Some(path),
+                            Err(e) => {
+                                eprintln!("[Warning]: Error processing glob entry: {}", e);
+                                None
+                            }
+                        })
+                        .collect();
+
+                    if matched_paths.is_empty() {
+                        eprintln!("[Warning]: No files match pattern: {}", path_str);
+                    } else {
+                        matched_paths.sort();
+                        expanded.extend(matched_paths);
+                    }
+                }
+                Err(e) => {
+                    return Err(
+                        format!("[Error]: Invalid glob pattern '{}': {}", path_str, e).into(),
+                    );
+                }
+            }
+        } else {
+            expanded.push(path);
+        }
+    }
+
+    Ok(expanded)
 }

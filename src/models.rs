@@ -1,15 +1,17 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, TimestampSeconds};
-use std::{io::Error as IoError, path::PathBuf, time::SystemTime};
+use std::{path::PathBuf, time::SystemTime};
 use strum_macros::Display;
-use thiserror::Error;
 use uuid::Uuid;
 
+use crate::exceptions::{FileError, ValidityWarning};
 use crate::utils::get_metadata;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Display)]
 pub enum Operation {
+    #[strum(to_string = "copy")]
     Copy,
+    #[strum(to_string = "cut")]
     Cut,
 }
 
@@ -48,7 +50,7 @@ pub struct RecordEntry {
 }
 
 impl RecordEntry {
-    pub fn check_validity(&self) -> Result<Option<ValidityWarning>, ValidityError> {
+    pub fn check_validity(&self) -> Result<Option<ValidityWarning>, FileError> {
         let Metadata {
             modified,
             size,
@@ -74,30 +76,6 @@ impl RecordEntry {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum ValidityError {
-    #[error("{0:?} is not found")]
-    PathNotFound(PathBuf),
-    #[error("failed to get absolute path for {0:?}: {1}")]
-    AbsolutePathError(PathBuf, IoError),
-    #[error("failed to get metadata path for {0:?}: {1}")]
-    MetadataError(PathBuf, IoError),
-    #[error("failed to get modified timestamp for {0:?}: {1}")]
-    ModifiedAccessError(PathBuf, IoError),
-    #[error("{0:?} is unsupported file type")]
-    UnsupportedType(PathBuf),
-}
-
-#[derive(Debug, Display)]
-pub enum ValidityWarning {
-    #[strum(to_string = "{0:?} was modified after last access")]
-    Modified(PathBuf),
-    #[strum(to_string = "{0:?} has changed in type")]
-    Type(PathBuf),
-    #[strum(to_string = "{0:?} has changed in size")]
-    Size(PathBuf),
-}
-
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct RecordData {
     pub entries: Vec<RecordEntry>,
@@ -111,14 +89,6 @@ pub enum Action {
     Clipboard,
     History,
     Help,
-}
-
-#[derive(Debug, Error)]
-pub enum InputError {
-    #[error("missing argument: {0}")]
-    MissingArgument(String),
-    #[error("invalid command: {0}")]
-    InvalidCommand(String),
 }
 
 pub struct PasteContent {

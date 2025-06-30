@@ -5,7 +5,8 @@ use std::{
     path::PathBuf,
 };
 
-use crate::models::{EntryType, Metadata, ValidityError};
+use crate::exceptions::FileError;
+use crate::models::{EntryType, Metadata};
 
 pub fn get_absolute_path(path: &PathBuf) -> Result<PathBuf, IoError> {
     if path.is_relative() {
@@ -15,25 +16,31 @@ pub fn get_absolute_path(path: &PathBuf) -> Result<PathBuf, IoError> {
         Ok(path.canonicalize()?)
     }
 }
-pub fn get_metadata(path: &PathBuf) -> Result<Metadata, ValidityError> {
-    let absolute_path = match get_absolute_path(path) {
-        Ok(path) => path,
-        Err(error) => return Err(ValidityError::AbsolutePathError(path.clone(), error)),
-    };
-    let metadata = match metadata(&absolute_path) {
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            return Err(ValidityError::PathNotFound(absolute_path));
-        }
-        Err(error) => {
-            return Err(ValidityError::MetadataError(absolute_path, error));
-        }
-        Ok(metadata) => metadata,
-    };
+pub fn get_metadata(path: &PathBuf) -> Result<Metadata, FileError> {
+    let absolute_path = get_absolute_path(path).map_err(|error| FileError::AbsolutePath {
+        path: path.clone(),
+        source: error,
+    })?;
 
-    let modified = match metadata.modified() {
-        Ok(modified) => modified,
-        Err(error) => return Err(ValidityError::ModifiedAccessError(absolute_path, error)),
-    };
+    let metadata = metadata(&absolute_path).map_err(|error| {
+        if error.kind() == ErrorKind::NotFound {
+            FileError::PathNotFound {
+                path: absolute_path.clone(),
+            }
+        } else {
+            FileError::Metadata {
+                path: absolute_path.clone(),
+                source: error,
+            }
+        }
+    })?;
+
+    let modified = metadata
+        .modified()
+        .map_err(|error| FileError::ModifiedAccess {
+            path: absolute_path.clone(),
+            source: error,
+        })?;
 
     let entry_type = if metadata.is_dir() {
         EntryType::Directory
@@ -42,7 +49,9 @@ pub fn get_metadata(path: &PathBuf) -> Result<Metadata, ValidityError> {
     } else if metadata.is_file() {
         EntryType::File
     } else {
-        return Err(ValidityError::UnsupportedType(absolute_path));
+        return Err(FileError::UnsupportedType {
+            path: absolute_path,
+        });
     };
 
     let size = if entry_type == EntryType::Directory {
