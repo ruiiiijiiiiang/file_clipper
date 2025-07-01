@@ -2,20 +2,28 @@ use fs_extra::{copy_items, dir::CopyOptions, move_items};
 use glob::glob;
 use std::{
     collections::{HashSet, VecDeque},
-    error::Error,
     path::PathBuf,
     time::SystemTime,
 };
 use uuid::Uuid;
 
-use crate::models::{Metadata, Operation, PasteContent, RecordEntry, RecordType};
-use crate::record_handler::{read_clipboard, read_history, write_clipboard, write_history};
 use crate::utils::{get_absolute_path, get_metadata};
+use crate::{
+    exceptions::RecordError,
+    record_handler::{read_clipboard, read_history, write_clipboard, write_history},
+};
+use crate::{
+    exceptions::{AppError, AppWarning, FileError, FileWarning, RecordWarning},
+    models::{Metadata, Operation, PasteContent, RecordEntry, RecordType},
+};
 
-pub fn handle_transfer(paths: Vec<PathBuf>, operation: Operation) -> Result<(), Box<dyn Error>> {
+pub fn handle_transfer(
+    paths: Vec<PathBuf>,
+    operation: Operation,
+) -> Result<Option<Vec<AppWarning>>, AppError> {
     let mut clipboard_entries = VecDeque::from(read_clipboard()?.unwrap_or(vec![]));
-    let expand_paths = expand_paths(paths)?;
-    for path in &expand_paths {
+    let (expanded_paths, warnings) = expand_paths(paths)?;
+    for path in &expanded_paths {
         let Metadata {
             size,
             entry_type,
@@ -34,22 +42,25 @@ pub fn handle_transfer(paths: Vec<PathBuf>, operation: Operation) -> Result<(), 
     }
     let clipboard_entries: Vec<RecordEntry> = clipboard_entries.into();
     write_clipboard(&clipboard_entries)?;
-    for path in expand_paths {
+    for path in expanded_paths {
         println!("[Info]: {:?} {}", operation, path.display());
     }
-    Ok(())
+    Ok(warnings)
 }
 
 pub fn handle_paste(
     destination_path: PathBuf,
     paste_content: Option<PasteContent>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<Option<Vec<AppWarning>>, AppError> {
+    let warnings: Option<Vec<AppWarning>>;
     let destination_path = get_absolute_path(&destination_path)?;
     let clipboard_entries = read_clipboard()?.unwrap_or(Vec::new());
     let (entries_to_paste, entries_remaining) = match paste_content {
         // If no entries are provided, use the clipboard
         None => {
-            let (valid_entries, invalid_entries) = filter_invalid_entries(&clipboard_entries);
+            let (valid_entries, invalid_entries, validation_warnings) =
+                filter_invalid_entries(&clipboard_entries);
+            warnings = validation_warnings;
             (valid_entries, Some(invalid_entries))
         }
         // If entries are provided, remove them from the clipboard
@@ -60,11 +71,15 @@ pub fn handle_paste(
             } = content;
             match source {
                 RecordType::History => {
-                    let (valid_entries, _) = filter_invalid_entries(&clipboard_entries);
+                    let (valid_entries, _, validation_warnings) =
+                        filter_invalid_entries(&clipboard_entries);
+                    warnings = validation_warnings;
                     (valid_entries, None)
                 }
                 RecordType::Clipboard => {
-                    let (valid_entries, invalid_entries) = filter_invalid_entries(&pasted_entries);
+                    let (valid_entries, invalid_entries, validation_warnings) =
+                        filter_invalid_entries(&pasted_entries);
+                    warnings = validation_warnings;
                     let pasted_entry_ids: HashSet<Uuid> =
                         pasted_entries.iter().map(|entry| entry.id).collect();
                     let invalid_entry_ids: HashSet<Uuid> =
@@ -87,14 +102,27 @@ pub fn handle_paste(
     let options = CopyOptions::new();
     for mut entry in entries_to_paste {
         match entry.operation {
-            Operation::Copy => copy_items(&[&entry.path], &destination_path, &options)?,
+            Operation::Copy => {
+                copy_items(&[&entry.path], &destination_path, &options).map_err(|error| {
+                    FileError::Copy {
+                        from_path: entry.path.clone(),
+                        to_path: destination_path.clone(),
+                        source: error,
+                    }
+                })?;
+            }
             Operation::Cut => {
-                move_items(&[&entry.path], &destination_path, &options)?;
+                move_items(&[&entry.path], &destination_path, &options).map_err(|error| {
+                    FileError::Move {
+                        from_path: entry.path.clone(),
+                        to_path: destination_path.clone(),
+                        source: error,
+                    }
+                })?;
                 let file_name = entry.path.file_name().unwrap();
                 let mut new_path = destination_path.clone();
                 new_path.push(file_name);
                 entry.path = new_path;
-                0 // Return 0 to make branches have the same type
             }
         };
         println!("[Info]: paste {}", entry.path.display());
@@ -106,16 +134,13 @@ pub fn handle_paste(
     }
     let history_entries: Vec<RecordEntry> = history_entries.into();
     write_history(&history_entries)?;
-    Ok(())
+    Ok(warnings)
 }
 
-pub fn handle_remove(id: Uuid) -> Result<(), Box<dyn Error>> {
+pub fn handle_remove(id: Uuid) -> Result<Option<RecordWarning>, RecordError> {
     let clipboard_entries = match read_clipboard() {
         Ok(Some(entries)) => entries,
-        _ => {
-            println!("[Error]: failed to read clipboard");
-            return Ok(());
-        }
+        _ => return Ok(Some(RecordWarning::ClipboardUnreadable)),
     };
     let filtered_entries: Vec<RecordEntry> = clipboard_entries
         .iter()
@@ -123,33 +148,43 @@ pub fn handle_remove(id: Uuid) -> Result<(), Box<dyn Error>> {
         .cloned()
         .collect();
     if filtered_entries.len() == clipboard_entries.len() {
-        println!("[Error]: no entry found");
+        return Ok(Some(RecordWarning::EntryNotFound));
     } else {
         write_clipboard(&filtered_entries)?
     }
-    Ok(())
+    Ok(None)
 }
 
-fn filter_invalid_entries(entries: &[RecordEntry]) -> (Vec<RecordEntry>, Vec<RecordEntry>) {
-    entries.iter().cloned().partition(|entry| {
+fn filter_invalid_entries(
+    entries: &[RecordEntry],
+) -> (Vec<RecordEntry>, Vec<RecordEntry>, Option<Vec<AppWarning>>) {
+    let mut warnings: Vec<AppWarning> = Vec::new();
+    let (valid_entries, invalid_entries) = entries.iter().cloned().partition(|entry| {
         let validity = entry.check_validity();
         match validity {
             Ok(warning) => {
                 if let Some(warning) = warning {
-                    eprintln!("[Warning]: {}", warning);
+                    warnings.push(warning.into());
                 }
                 true
             }
-            Err(error) => {
-                eprintln!("[Error]: {}", error);
-                false
-            }
+            Err(_) => false,
         }
-    })
+    });
+    (
+        valid_entries,
+        invalid_entries,
+        if warnings.is_empty() {
+            None
+        } else {
+            Some(warnings)
+        },
+    )
 }
 
-fn expand_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+fn expand_paths(paths: Vec<PathBuf>) -> Result<(Vec<PathBuf>, Option<Vec<AppWarning>>), FileError> {
     let mut expanded = Vec::new();
+    let mut warnings = Vec::new();
 
     for path in paths {
         let path_str = path.to_string_lossy();
@@ -157,27 +192,32 @@ fn expand_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, Box<dyn Error>> {
         if path_str.contains('*') || path_str.contains('?') || path_str.contains('[') {
             match glob(&path_str) {
                 Ok(entries) => {
-                    let mut matched_paths: Vec<PathBuf> = entries
-                        .filter_map(|entry| match entry {
-                            Ok(path) => Some(path),
-                            Err(e) => {
-                                eprintln!("[Warning]: Error processing glob entry: {}", e);
-                                None
-                            }
+                    let mut matched_paths = entries
+                        .map(|entry| {
+                            entry.map_err(|error| FileError::GlobUnreadable {
+                                path: path.to_path_buf(),
+                                source: error,
+                            })
                         })
-                        .collect();
+                        .collect::<Result<Vec<PathBuf>, FileError>>()?;
 
                     if matched_paths.is_empty() {
-                        eprintln!("[Warning]: No files match pattern: {}", path_str);
+                        warnings.push(
+                            FileWarning::GlobUnmatched {
+                                path: path.to_path_buf(),
+                            }
+                            .into(),
+                        );
                     } else {
                         matched_paths.sort();
                         expanded.extend(matched_paths);
                     }
                 }
-                Err(e) => {
-                    return Err(
-                        format!("[Error]: Invalid glob pattern '{}': {}", path_str, e).into(),
-                    );
+                Err(error) => {
+                    return Err(FileError::GlobInvalidPattern {
+                        path: path.to_path_buf(),
+                        source: error,
+                    });
                 }
             }
         } else {
@@ -185,5 +225,12 @@ fn expand_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, Box<dyn Error>> {
         }
     }
 
-    Ok(expanded)
+    Ok((
+        expanded,
+        if warnings.is_empty() {
+            None
+        } else {
+            Some(warnings)
+        },
+    ))
 }

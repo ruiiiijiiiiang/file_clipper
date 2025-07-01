@@ -19,7 +19,6 @@ uuid = { version = "1.16", features = [
 toml = "0.8.20"
 chrono = "0.4.40"
 serde_with = "3.12.0"
-strum = { version = "0.27.1", features = ["derive"] }
 strum_macros = "0.27.1"
 thiserror = "2.0.12"
 color-eyre = "0.6.5"

@@ -4,7 +4,7 @@ use std::{path::PathBuf, time::SystemTime};
 use strum_macros::Display;
 use uuid::Uuid;
 
-use crate::exceptions::{FileError, ValidityWarning};
+use crate::exceptions::{FileError, FileWarning};
 use crate::utils::get_metadata;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Display)]
@@ -15,7 +15,7 @@ pub enum Operation {
     Cut,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Display)]
 pub enum EntryType {
     File,
     Directory,
@@ -50,7 +50,7 @@ pub struct RecordEntry {
 }
 
 impl RecordEntry {
-    pub fn check_validity(&self) -> Result<Option<ValidityWarning>, FileError> {
+    pub fn check_validity(&self) -> Result<Option<FileWarning>, FileError> {
         let Metadata {
             modified,
             size,
@@ -59,17 +59,27 @@ impl RecordEntry {
         } = get_metadata(&self.path)?;
 
         if entry_type != self.entry_type {
-            return Ok(Some(ValidityWarning::Type(absolute_path)));
+            return Ok(Some(FileWarning::TypeMismatch {
+                path: absolute_path,
+                old_type: self.entry_type.to_string(),
+                new_type: entry_type.to_string(),
+            }));
         }
 
         if let (Some(expected_size), Some(self_size)) = (size, self.size) {
             if self_size != expected_size {
-                return Ok(Some(ValidityWarning::Size(absolute_path)));
+                return Ok(Some(FileWarning::SizeMismatch {
+                    path: absolute_path,
+                    old_size: self_size,
+                    new_size: expected_size,
+                }));
             }
         }
 
         if modified > self.timestamp {
-            return Ok(Some(ValidityWarning::Modified(absolute_path)));
+            return Ok(Some(FileWarning::ModifiedMismatch {
+                path: absolute_path,
+            }));
         }
 
         Ok(None)

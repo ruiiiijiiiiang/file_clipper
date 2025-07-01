@@ -1,26 +1,29 @@
-use std::{
-    env,
-    fs::metadata,
-    io::{Error as IoError, ErrorKind},
-    path::PathBuf,
-};
+use std::{env, fs::metadata, io::ErrorKind, path::PathBuf};
 
 use crate::exceptions::FileError;
 use crate::models::{EntryType, Metadata};
 
-pub fn get_absolute_path(path: &PathBuf) -> Result<PathBuf, IoError> {
-    if path.is_relative() {
-        let cwd = env::current_dir()?;
-        Ok(cwd.join(path).canonicalize()?)
+pub fn get_absolute_path(path: &PathBuf) -> Result<PathBuf, FileError> {
+    let absolute_path = if path.is_relative() {
+        let cwd = env::current_dir().map_err(|error| FileError::AbsolutePath {
+            path: path.to_path_buf(),
+            source: error,
+        })?;
+        cwd.join(path)
     } else {
-        Ok(path.canonicalize()?)
-    }
+        path.to_path_buf()
+    };
+    let canonical_path = absolute_path
+        .canonicalize()
+        .map_err(|error| FileError::AbsolutePath {
+            path: path.to_path_buf(),
+            source: error,
+        })?;
+    Ok(canonical_path)
 }
+
 pub fn get_metadata(path: &PathBuf) -> Result<Metadata, FileError> {
-    let absolute_path = get_absolute_path(path).map_err(|error| FileError::AbsolutePath {
-        path: path.clone(),
-        source: error,
-    })?;
+    let absolute_path = get_absolute_path(path)?;
 
     let metadata = metadata(&absolute_path).map_err(|error| {
         if error.kind() == ErrorKind::NotFound {
