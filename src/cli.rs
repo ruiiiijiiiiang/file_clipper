@@ -1,7 +1,6 @@
 use std::{env, path::PathBuf};
 
-use crate::exceptions::InputError;
-use crate::models::Action;
+use crate::{exceptions::InputError, models::Action};
 
 pub fn handle_cli() -> Result<Action, InputError> {
     let args: Vec<String> = env::args().collect();

@@ -17,12 +17,15 @@ use ratatui::{
     },
     Frame, TerminalOptions, Viewport,
 };
-use std::{env, error::Error, io::stdout, time::Duration};
+use std::{env, io::stdout, time::Duration};
 
-use crate::file_handler::{handle_paste, handle_remove};
-use crate::models::{PasteContent, RecordEntry, RecordType};
-use crate::record_handler::{read_clipboard, read_history};
-use crate::utils::get_metadata;
+use crate::{
+    exceptions::{AppError, FileError, TuiError},
+    file_handler::{handle_paste, handle_remove},
+    models::{PasteContent, RecordEntry, RecordType},
+    record_handler::{read_clipboard, read_history},
+    utils::get_metadata,
+};
 
 const HEIGHT: u16 = 20;
 const TIMESTAMP_WIDTH: u16 = 30;
@@ -39,7 +42,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(mode: RecordType) -> Result<Self, Box<dyn Error>> {
+    pub fn new(mode: RecordType) -> Result<Self, AppError> {
         let entries = match mode {
             RecordType::Clipboard => read_clipboard()?.unwrap_or(vec![]),
             RecordType::History => read_history()?.unwrap_or(vec![]),
@@ -58,41 +61,50 @@ impl App {
         })
     }
 
-    pub fn run(mut self) -> Result<(), Box<dyn Error>> {
+    pub fn run(mut self) -> Result<(), AppError> {
         let mut terminal = ratatui::init_with_options(TerminalOptions {
             viewport: Viewport::Inline(HEIGHT),
         });
+
         loop {
             if self.should_exit {
                 break;
             }
-            terminal.draw(|frame| {
-                let area = frame.area();
-                self.render_table(frame, area);
-                self.render_scrollbar(frame, area);
-            })?;
+            terminal
+                .draw(|frame| {
+                    let area = frame.area();
+                    self.render_table(frame, area);
+                    self.render_scrollbar(frame, area);
+                })
+                .map_err(|error| TuiError::TerminalDraw { source: error })?;
 
-            if event::poll(Duration::from_millis(100))? {
-                match event::read()? {
+            if event::poll(Duration::from_millis(100))
+                .map_err(|error| TuiError::EventPolling { source: error })?
+            {
+                match event::read().map_err(|error| TuiError::EventRead { source: error })? {
                     event::Event::Key(key) => self.handle_keypress(key)?,
-                    event::Event::Resize(_, _) => terminal.autoresize()?,
+                    event::Event::Resize(_, _) => terminal
+                        .autoresize()
+                        .map_err(|error| TuiError::TerminalAutoresize { source: error })?,
                     _ => {}
                 };
             }
         }
+
         execute!(
             stdout(),
             MoveToColumn(0),
             MoveUp(HEIGHT - 1),
             Clear(ClearType::FromCursorDown),
             Show
-        )?;
+        )
+        .map_err(|error| TuiError::TerminalCommand { source: error })?;
         ratatui::restore();
         Ok(())
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
-        let header = ["Path", "Timestamp", "Operation"]
+        let header = ["Path", "Accessed", "Operation"]
             .into_iter()
             .map(Cell::from)
             .collect::<Row>()
@@ -161,7 +173,7 @@ impl App {
         );
     }
 
-    fn handle_keypress(&mut self, key: KeyEvent) -> Result<(), Box<dyn Error>> {
+    fn handle_keypress(&mut self, key: KeyEvent) -> Result<(), AppError> {
         match key {
             KeyEvent {
                 code:
@@ -171,43 +183,70 @@ impl App {
                     | KeyCode::Right
                     | KeyCode::Char(' '),
                 ..
-            } => self.mark(),
+            } => {
+                self.mark();
+                Ok(())
+            }
             KeyEvent {
                 code: KeyCode::Char('j') | KeyCode::Down,
                 ..
-            } => self.next(1),
+            } => {
+                self.next(1);
+                Ok(())
+            }
             KeyEvent {
                 code: KeyCode::Char('k') | KeyCode::Up,
                 ..
-            } => self.previous(1),
+            } => {
+                self.previous(1);
+                Ok(())
+            }
             KeyEvent {
                 code: KeyCode::Char('d'),
                 modifiers: event::KeyModifiers::CONTROL,
                 ..
-            } => self.next(HEIGHT / 2),
+            } => {
+                self.next(HEIGHT / 2);
+                Ok(())
+            }
             KeyEvent {
                 code: KeyCode::Char('u'),
                 modifiers: event::KeyModifiers::CONTROL,
                 ..
-            } => self.previous(HEIGHT / 2),
+            } => {
+                self.previous(HEIGHT / 2);
+                Ok(())
+            }
             KeyEvent {
                 code: KeyCode::Char('f'),
                 modifiers: event::KeyModifiers::CONTROL,
                 ..
-            } => self.next(HEIGHT),
+            } => {
+                self.next(HEIGHT);
+                Ok(())
+            }
             KeyEvent {
                 code: KeyCode::Char('b'),
                 modifiers: event::KeyModifiers::CONTROL,
                 ..
-            } => self.previous(HEIGHT),
+            } => {
+                self.previous(HEIGHT);
+                Ok(())
+            }
             KeyEvent {
                 code: KeyCode::Char('g'),
                 ..
-            } => self.top(),
+            } => {
+                self.top();
+                Ok(())
+            }
             KeyEvent {
                 code: KeyCode::Char('G'),
                 ..
-            } => self.bottom(),
+            } => {
+                self.bottom();
+                Ok(())
+            }
             KeyEvent {
                 code: KeyCode::Char('x'),
                 ..
@@ -223,12 +262,15 @@ impl App {
             KeyEvent {
                 code: KeyCode::Char('q'),
                 ..
-            } => self.exit(),
+            } => {
+                self.exit();
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
 
-    fn next(&mut self, num_lines: u16) -> Result<(), Box<dyn Error>> {
+    fn next(&mut self, num_lines: u16) {
         let num_lines = num_lines as usize;
         let i = match self.table_state.selected() {
             Some(i) => {
@@ -242,10 +284,9 @@ impl App {
         };
         self.table_state.select(Some(i));
         self.scroll_state = self.scroll_state.position(i);
-        Ok(())
     }
 
-    fn previous(&mut self, num_lines: u16) -> Result<(), Box<dyn Error>> {
+    fn previous(&mut self, num_lines: u16) {
         let num_lines = num_lines as usize;
         let i = match self.table_state.selected() {
             Some(i) => i.saturating_sub(num_lines),
@@ -253,41 +294,42 @@ impl App {
         };
         self.table_state.select(Some(i));
         self.scroll_state = self.scroll_state.position(i);
-        Ok(())
     }
 
-    fn top(&mut self) -> Result<(), Box<dyn Error>> {
+    fn top(&mut self) {
         self.table_state.select(Some(0));
         self.scroll_state = self.scroll_state.position(0);
-        Ok(())
     }
 
-    fn bottom(&mut self) -> Result<(), Box<dyn Error>> {
+    fn bottom(&mut self) {
         self.table_state.select(Some(self.entries.len() - 1));
         self.scroll_state = self.scroll_state.position(self.entries.len() - 1);
-        Ok(())
     }
 
-    fn mark(&mut self) -> Result<(), Box<dyn Error>> {
+    fn mark(&mut self) {
         if let Some(selected) = self.table_state.selected() {
             if !self.invalid[selected] {
                 self.marked[selected] = !self.marked[selected];
             }
         }
-        Ok(())
     }
 
-    fn remove(&mut self) -> Result<(), Box<dyn Error>> {
+    fn remove(&mut self) -> Result<(), AppError> {
         if self.mode == RecordType::Clipboard {
             if let Some(selected) = self.table_state.selected() {
-                handle_remove(self.entries[selected].id)?;
+                match handle_remove(self.entries[selected].id) {
+                    Err(error) => Err(error),
+                    Ok(Some(warnings)) => todo!("show warnings"),
+                    _ => Ok(()),
+                };
             }
         }
         Ok(())
     }
 
-    fn paste(&mut self) -> Result<(), Box<dyn Error>> {
-        let destination_path = env::current_dir()?;
+    fn paste(&mut self) -> Result<(), AppError> {
+        let destination_path =
+            env::current_dir().map_err(|error| FileError::Cwd { source: error })?;
         let marked_entries = self
             .entries
             .clone()
@@ -307,13 +349,16 @@ impl App {
             entries: marked_entries,
             source: self.mode.clone(),
         };
-        handle_paste(destination_path, Some(paste_content))?;
-        self.exit()?;
+        match handle_paste(destination_path, Some(paste_content)) {
+            Err(error) => Err(error),
+            Ok(Some(warnings)) => todo!("show warnings"),
+            _ => Ok(()),
+        };
+        self.exit();
         Ok(())
     }
 
-    fn exit(&mut self) -> Result<(), Box<dyn Error>> {
+    fn exit(&mut self) {
         self.should_exit = true;
-        Ok(())
     }
 }

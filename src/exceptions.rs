@@ -6,10 +6,16 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error(transparent)]
+    Input(#[from] InputError),
+
+    #[error(transparent)]
     Record(#[from] RecordError),
 
     #[error(transparent)]
     File(#[from] FileError),
+
+    #[error(transparent)]
+    Tui(#[from] TuiError),
 }
 
 #[derive(Debug, Error)]
@@ -81,6 +87,12 @@ pub enum FileError {
         source: IoError,
     },
 
+    #[error("Could not determine the current working directory. This could be a permission issue or a problem with the file system.")]
+    Cwd {
+        #[source]
+        source: IoError,
+    },
+
     #[error("Failed to access information about '{path}'. This might be due to incorrect permissions or a corrupted file system entry.")]
     Metadata {
         path: PathBuf,
@@ -126,6 +138,38 @@ pub enum FileError {
         path: PathBuf,
         #[source]
         source: PatternError,
+    },
+}
+#[derive(Debug, Error)]
+pub enum TuiError {
+    #[error("Failed to draw to terminal: {source}")]
+    TerminalDraw {
+        #[source]
+        source: IoError,
+    },
+
+    #[error("Failed to poll for events: {source}")]
+    EventPolling {
+        #[source]
+        source: IoError,
+    },
+
+    #[error("Failed to read event: {source}")]
+    EventRead {
+        #[source]
+        source: IoError,
+    },
+
+    #[error("Failed to execute terminal command: {source}")]
+    TerminalCommand {
+        #[source]
+        source: IoError,
+    },
+
+    #[error("Failed to handle terminal autoresize: {source}")]
+    TerminalAutoresize {
+        #[source]
+        source: IoError,
     },
 }
 
@@ -177,8 +221,9 @@ pub enum RecordWarning {
 
 #[derive(Debug, Error)]
 pub enum InputError {
-    #[error("missing argument: {0}")]
+    #[error("Missing argument: {0}")]
     MissingArgument(String),
-    #[error("invalid command: {0}")]
+
+    #[error("Invalid command: {0}")]
     InvalidCommand(String),
 }

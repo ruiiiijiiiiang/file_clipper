@@ -4,8 +4,10 @@ use std::{path::PathBuf, time::SystemTime};
 use strum_macros::Display;
 use uuid::Uuid;
 
-use crate::exceptions::{FileError, FileWarning};
-use crate::utils::get_metadata;
+use crate::{
+    exceptions::{FileError, FileWarning},
+    utils::get_metadata,
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Display)]
 pub enum Operation {

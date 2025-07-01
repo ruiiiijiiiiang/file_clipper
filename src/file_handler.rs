@@ -7,14 +7,11 @@ use std::{
 };
 use uuid::Uuid;
 
-use crate::utils::{get_absolute_path, get_metadata};
 use crate::{
-    exceptions::RecordError,
-    record_handler::{read_clipboard, read_history, write_clipboard, write_history},
-};
-use crate::{
-    exceptions::{AppError, AppWarning, FileError, FileWarning, RecordWarning},
+    exceptions::{AppError, AppWarning, FileError, FileWarning, RecordError, RecordWarning},
     models::{Metadata, Operation, PasteContent, RecordEntry, RecordType},
+    record_handler::{read_clipboard, read_history, write_clipboard, write_history},
+    utils::{get_absolute_path, get_metadata},
 };
 
 pub fn handle_transfer(
@@ -195,19 +192,14 @@ fn expand_paths(paths: Vec<PathBuf>) -> Result<(Vec<PathBuf>, Option<Vec<AppWarn
                     let mut matched_paths = entries
                         .map(|entry| {
                             entry.map_err(|error| FileError::GlobUnreadable {
-                                path: path.to_path_buf(),
+                                path: path.clone(),
                                 source: error,
                             })
                         })
                         .collect::<Result<Vec<PathBuf>, FileError>>()?;
 
                     if matched_paths.is_empty() {
-                        warnings.push(
-                            FileWarning::GlobUnmatched {
-                                path: path.to_path_buf(),
-                            }
-                            .into(),
-                        );
+                        warnings.push(FileWarning::GlobUnmatched { path: path.clone() }.into());
                     } else {
                         matched_paths.sort();
                         expanded.extend(matched_paths);
@@ -215,7 +207,7 @@ fn expand_paths(paths: Vec<PathBuf>) -> Result<(Vec<PathBuf>, Option<Vec<AppWarn
                 }
                 Err(error) => {
                     return Err(FileError::GlobInvalidPattern {
-                        path: path.to_path_buf(),
+                        path: path.clone(),
                         source: error,
                     });
                 }

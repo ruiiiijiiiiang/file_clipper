@@ -7,8 +7,10 @@ use std::{
 };
 use toml::{de::from_str as toml_from_str, ser::to_string as toml_to_string};
 
-use crate::exceptions::RecordError;
-use crate::models::{RecordData, RecordEntry, RecordType};
+use crate::{
+    exceptions::RecordError,
+    models::{RecordData, RecordEntry, RecordType},
+};
 
 static CLIPBOARD_MUTEX: Mutex<()> = Mutex::new(());
 static HISTORY_MUTEX: Mutex<()> = Mutex::new(());

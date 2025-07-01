@@ -1,22 +1,21 @@
 use std::{env, fs::metadata, io::ErrorKind, path::PathBuf};
 
-use crate::exceptions::FileError;
-use crate::models::{EntryType, Metadata};
+use crate::{
+    exceptions::FileError,
+    models::{EntryType, Metadata},
+};
 
 pub fn get_absolute_path(path: &PathBuf) -> Result<PathBuf, FileError> {
     let absolute_path = if path.is_relative() {
-        let cwd = env::current_dir().map_err(|error| FileError::AbsolutePath {
-            path: path.to_path_buf(),
-            source: error,
-        })?;
+        let cwd = env::current_dir().map_err(|error| FileError::Cwd { source: error })?;
         cwd.join(path)
     } else {
-        path.to_path_buf()
+        path.clone()
     };
     let canonical_path = absolute_path
         .canonicalize()
         .map_err(|error| FileError::AbsolutePath {
-            path: path.to_path_buf(),
+            path: path.clone(),
             source: error,
         })?;
     Ok(canonical_path)
