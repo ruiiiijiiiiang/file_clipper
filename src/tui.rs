@@ -8,28 +8,35 @@ use crossterm::{
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{
-        palette::tailwind::{BLUE, EMERALD, GRAY},
+        palette::tailwind::{AMBER, BLUE, EMERALD, GRAY},
         Modifier, Style,
     },
+    text::Line,
     widgets::{
-        Block, Borders, Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation,
+        Block, Borders, Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation,
         ScrollbarState, Table, TableState,
     },
     Frame, TerminalOptions, Viewport,
 };
-use std::{env, io::stdout, time::Duration};
+use std::{
+    env,
+    io::stdout,
+    time::{Duration, Instant},
+};
 
 use crate::{
-    exceptions::{AppError, FileError, TuiError},
+    errors::{AppError, AppInfo, AppWarning, FileError, TuiError},
     file_handler::{handle_paste, handle_remove},
     models::{PasteContent, RecordEntry, RecordType},
-    record_handler::{read_clipboard, read_history},
+    records::{read_clipboard, read_history},
     utils::get_metadata,
 };
 
 const HEIGHT: u16 = 20;
 const TIMESTAMP_WIDTH: u16 = 30;
 const OPERATION_WIDTH: u16 = 10;
+const WARNING_TIMEOUT: u64 = 3;
+const POLL_INTERVAL: u64 = 100;
 
 pub struct App {
     pub entries: Vec<RecordEntry>,
@@ -39,6 +46,9 @@ pub struct App {
     pub invalid: Vec<bool>,
     pub marked: Vec<bool>,
     pub should_exit: bool,
+    pub warnings: Vec<AppWarning>,
+    pub warning_timer: Option<Instant>,
+    pub infos: Vec<AppInfo>,
 }
 
 impl App {
@@ -58,10 +68,13 @@ impl App {
             should_exit: entries.is_empty(),
             entries,
             mode,
+            warnings: Vec::new(),
+            warning_timer: None,
+            infos: Vec::new(),
         })
     }
 
-    pub fn run(mut self) -> Result<(), AppError> {
+    pub fn run(mut self) -> Result<Vec<AppInfo>, AppError> {
         let mut terminal = ratatui::init_with_options(TerminalOptions {
             viewport: Viewport::Inline(HEIGHT),
         });
@@ -70,15 +83,21 @@ impl App {
             if self.should_exit {
                 break;
             }
+
+            if let Some(timer) = self.warning_timer {
+                if timer.elapsed() > Duration::from_secs(WARNING_TIMEOUT) {
+                    self.warnings.clear();
+                    self.warning_timer = None;
+                }
+            }
+
             terminal
                 .draw(|frame| {
-                    let area = frame.area();
-                    self.render_table(frame, area);
-                    self.render_scrollbar(frame, area);
+                    self.render_ui(frame, frame.area());
                 })
                 .map_err(|error| TuiError::TerminalDraw { source: error })?;
 
-            if event::poll(Duration::from_millis(100))
+            if event::poll(Duration::from_millis(POLL_INTERVAL))
                 .map_err(|error| TuiError::EventPolling { source: error })?
             {
                 match event::read().map_err(|error| TuiError::EventRead { source: error })? {
@@ -94,13 +113,43 @@ impl App {
         execute!(
             stdout(),
             MoveToColumn(0),
-            MoveUp(HEIGHT - 1),
+            MoveUp(HEIGHT),
             Clear(ClearType::FromCursorDown),
             Show
         )
         .map_err(|error| TuiError::TerminalCommand { source: error })?;
         ratatui::restore();
-        Ok(())
+        Ok(self.infos)
+    }
+
+    fn render_ui(&mut self, frame: &mut Frame, area: Rect) {
+        let warning_height = if self.warnings.is_empty() {
+            0
+        } else {
+            self.warnings.len() as u16
+        };
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(warning_height)])
+            .split(area);
+
+        let main_area = chunks[0];
+        let warning_area = chunks[1];
+
+        self.render_table(frame, main_area);
+        self.render_scrollbar(frame, main_area);
+
+        if !self.warnings.is_empty() {
+            let warning_text = self
+                .warnings
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let paragraph = Paragraph::new(warning_text).style(Style::default().fg(AMBER.c400));
+            frame.render_widget(paragraph, warning_area);
+        }
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
@@ -152,7 +201,10 @@ impl App {
         .block(
             Block::default()
                 .title(format!("File Clipper - {}", self.mode))
-                .borders(Borders::ALL),
+                .borders(Borders::ALL)
+                .title_bottom(
+                    Line::from("Navigation: j/k; Select: space; Paste: p; Quit: q").centered(),
+                ),
         )
         .header(header)
         .highlight_spacing(HighlightSpacing::Always)
@@ -318,10 +370,13 @@ impl App {
         if self.mode == RecordType::Clipboard {
             if let Some(selected) = self.table_state.selected() {
                 match handle_remove(self.entries[selected].id) {
-                    Err(error) => Err(error),
-                    Ok(Some(warnings)) => todo!("show warnings"),
-                    _ => Ok(()),
-                };
+                    Err(error) => return Err(AppError::from(error)),
+                    Ok(Some(warning)) => {
+                        self.warnings = vec![AppWarning::from(warning)];
+                        self.warning_timer = Some(Instant::now());
+                    }
+                    _ => {}
+                }
             }
         }
         Ok(())
@@ -350,10 +405,15 @@ impl App {
             source: self.mode.clone(),
         };
         match handle_paste(destination_path, Some(paste_content)) {
-            Err(error) => Err(error),
-            Ok(Some(warnings)) => todo!("show warnings"),
-            _ => Ok(()),
-        };
+            Err(error) => return Err(error),
+            Ok((paste_infos, paste_warnings)) => {
+                self.infos.extend(paste_infos);
+                if let Some(warnings) = paste_warnings {
+                    self.warnings = warnings;
+                    self.warning_timer = Some(Instant::now());
+                }
+            }
+        }
         self.exit();
         Ok(())
     }
@@ -362,3 +422,4 @@ impl App {
         self.should_exit = true;
     }
 }
+

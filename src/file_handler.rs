@@ -8,18 +8,20 @@ use std::{
 use uuid::Uuid;
 
 use crate::{
-    exceptions::{AppError, AppWarning, FileError, FileWarning, RecordError, RecordWarning},
+    errors::{AppError, AppInfo, AppWarning, FileError, FileWarning, RecordError, RecordWarning},
     models::{Metadata, Operation, PasteContent, RecordEntry, RecordType},
-    record_handler::{read_clipboard, read_history, write_clipboard, write_history},
+    records::{read_clipboard, read_history, write_clipboard, write_history},
     utils::{get_absolute_path, get_metadata},
 };
 
 pub fn handle_transfer(
     paths: Vec<PathBuf>,
     operation: Operation,
-) -> Result<Option<Vec<AppWarning>>, AppError> {
+) -> Result<(Vec<AppInfo>, Option<Vec<AppWarning>>), AppError> {
     let mut clipboard_entries = VecDeque::from(read_clipboard()?.unwrap_or(vec![]));
     let (expanded_paths, warnings) = expand_paths(paths)?;
+    let mut infos = Vec::new();
+
     for path in &expanded_paths {
         let Metadata {
             size,
@@ -40,27 +42,40 @@ pub fn handle_transfer(
     let clipboard_entries: Vec<RecordEntry> = clipboard_entries.into();
     write_clipboard(&clipboard_entries)?;
     for path in expanded_paths {
-        println!("[Info]: {:?} {}", operation, path.display());
+        infos.push(AppInfo::Transfer {
+            operation: operation.clone(),
+            path,
+        });
     }
-    Ok(warnings)
+    Ok((infos, warnings))
 }
 
 pub fn handle_paste(
     destination_path: PathBuf,
     paste_content: Option<PasteContent>,
-) -> Result<Option<Vec<AppWarning>>, AppError> {
+) -> Result<(Vec<AppInfo>, Option<Vec<AppWarning>>), AppError> {
     let warnings: Option<Vec<AppWarning>>;
     let destination_path = get_absolute_path(&destination_path)?;
     let clipboard_entries = read_clipboard()?.unwrap_or(Vec::new());
-    let (entries_to_paste, entries_remaining) = match paste_content {
-        // If no entries are provided, use the clipboard
+    let mut infos = Vec::new();
+    let skip_write_history = if let Some(paste_contend) = &paste_content {
+        paste_contend.source == RecordType::History
+    } else {
+        false
+    };
+    let mut history_entries = if !skip_write_history {
+        Some(VecDeque::from(read_history()?.unwrap_or(vec![])))
+    } else {
+        None
+    };
+
+    let (entries_to_paste, entries_remaining) = match &paste_content {
         None => {
             let (valid_entries, invalid_entries, validation_warnings) =
                 filter_invalid_entries(&clipboard_entries);
             warnings = validation_warnings;
             (valid_entries, Some(invalid_entries))
         }
-        // If entries are provided, remove them from the clipboard
         Some(content) => {
             let PasteContent {
                 entries: pasted_entries,
@@ -68,14 +83,17 @@ pub fn handle_paste(
             } = content;
             match source {
                 RecordType::History => {
-                    let (valid_entries, _, validation_warnings) =
-                        filter_invalid_entries(&clipboard_entries);
+                    let (mut valid_entries, _, validation_warnings) =
+                        filter_invalid_entries(pasted_entries);
+                    valid_entries
+                        .iter_mut()
+                        .for_each(|entry| entry.operation = Operation::Copy);
                     warnings = validation_warnings;
                     (valid_entries, None)
                 }
                 RecordType::Clipboard => {
                     let (valid_entries, invalid_entries, validation_warnings) =
-                        filter_invalid_entries(&pasted_entries);
+                        filter_invalid_entries(pasted_entries);
                     warnings = validation_warnings;
                     let pasted_entry_ids: HashSet<Uuid> =
                         pasted_entries.iter().map(|entry| entry.id).collect();
@@ -94,7 +112,6 @@ pub fn handle_paste(
             }
         }
     };
-    let mut history_entries = VecDeque::from(read_history()?.unwrap_or(vec![]));
 
     let options = CopyOptions::new();
     for mut entry in entries_to_paste {
@@ -122,16 +139,22 @@ pub fn handle_paste(
                 entry.path = new_path;
             }
         };
-        println!("[Info]: paste {}", entry.path.display());
-        history_entries.push_front(entry.clone());
+        infos.push(AppInfo::Paste {
+            path: entry.path.clone(),
+        });
+        if let Some(history_entries) = history_entries.as_mut() {
+            history_entries.push_front(entry.clone());
+        }
     }
 
     if let Some(entries) = entries_remaining {
         write_clipboard(&entries)?
     }
-    let history_entries: Vec<RecordEntry> = history_entries.into();
-    write_history(&history_entries)?;
-    Ok(warnings)
+    if let Some(history_entries) = history_entries {
+        let history_entries: Vec<RecordEntry> = history_entries.into();
+        write_history(&history_entries)?;
+    }
+    Ok((infos, warnings))
 }
 
 pub fn handle_remove(id: Uuid) -> Result<Option<RecordWarning>, RecordError> {
@@ -226,3 +249,4 @@ fn expand_paths(paths: Vec<PathBuf>) -> Result<(Vec<PathBuf>, Option<Vec<AppWarn
         },
     ))
 }
+

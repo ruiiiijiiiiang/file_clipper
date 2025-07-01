@@ -3,11 +3,10 @@ use glob::{GlobError, PatternError};
 use std::{io::Error as IoError, path::PathBuf};
 use thiserror::Error;
 
+use crate::models::Operation;
+
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error(transparent)]
-    Input(#[from] InputError),
-
     #[error(transparent)]
     Record(#[from] RecordError),
 
@@ -220,10 +219,10 @@ pub enum RecordWarning {
 }
 
 #[derive(Debug, Error)]
-pub enum InputError {
-    #[error("Missing argument: {0}")]
-    MissingArgument(String),
+pub enum AppInfo {
+    #[error("{operation} {path}")]
+    Transfer { operation: Operation, path: PathBuf },
 
-    #[error("Invalid command: {0}")]
-    InvalidCommand(String),
+    #[error("paste {path}")]
+    Paste { path: PathBuf },
 }

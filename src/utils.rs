@@ -1,7 +1,7 @@
 use std::{env, fs::metadata, io::ErrorKind, path::PathBuf};
 
 use crate::{
-    exceptions::FileError,
+    errors::FileError,
     models::{EntryType, Metadata},
 };
 

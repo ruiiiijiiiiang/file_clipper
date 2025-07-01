@@ -1,42 +1,54 @@
-use std::{env, path::PathBuf};
+use std::path::PathBuf;
 
-use crate::{exceptions::InputError, models::Action};
+use clap::{Parser, Subcommand};
 
-pub fn handle_cli() -> Result<Action, InputError> {
-    let args: Vec<String> = env::args().collect();
+use crate::models::Action;
 
-    if args.len() < 2 {
-        return Err(InputError::MissingArgument("command".to_string()));
-    }
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    let command = &args[1];
+#[derive(Subcommand)]
+enum Commands {
+    #[command(alias = "cp")]
+    #[command(alias = "y")]
+    Copy {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
 
-    match command.as_str() {
-        "copy" | "cp" | "y" => {
-            if args.len() < 3 {
-                return Err(InputError::MissingArgument("path".to_string()));
-            }
-            let paths: Vec<PathBuf> = args[2..].iter().map(PathBuf::from).collect();
-            Ok(Action::Copy(paths))
-        }
-        "cut" | "mv" | "x" => {
-            if args.len() < 3 {
-                return Err(InputError::MissingArgument("path".to_string()));
-            }
-            let paths: Vec<PathBuf> = args[2..].iter().map(PathBuf::from).collect();
-            Ok(Action::Cut(paths))
-        }
-        "paste" | "p" => {
-            let path = if args.len() < 3 {
-                env::current_dir().unwrap()
-            } else {
-                PathBuf::from(&args[2])
-            };
-            Ok(Action::Paste(path))
-        }
-        "list" | "l" => Ok(Action::Clipboard),
-        "history" | "h" => Ok(Action::History),
-        "help" => Ok(Action::Help),
-        _ => Err(InputError::InvalidCommand(command.to_string())),
+    #[command(alias = "mv")]
+    #[command(alias = "x")]
+    Cut {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
+
+    #[command(alias = "p")]
+    Paste {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+
+    #[command(alias = "l")]
+    #[command(alias = "ls")]
+    List,
+
+    #[command(alias = "h")]
+    History,
+}
+
+pub fn handle_cli() -> Action {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Copy { paths } => Action::Copy(paths),
+        Commands::Cut { paths } => Action::Cut(paths),
+        Commands::Paste { path } => Action::Paste(path),
+        Commands::List => Action::Clipboard,
+        Commands::History => Action::History,
     }
 }

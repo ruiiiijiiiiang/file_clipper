@@ -1,16 +1,16 @@
 use std::error::Error;
 
 mod cli;
-mod exceptions;
+mod errors;
 mod file_handler;
 mod models;
-mod record_handler;
+mod records;
 mod tui;
 mod utils;
 
 use {
     cli::handle_cli,
-    exceptions::{AppError, AppWarning},
+    errors::{AppError, AppInfo, AppWarning},
     file_handler::{handle_paste, handle_transfer},
     models::{Action, Operation, RecordType},
     tui::App,
@@ -19,48 +19,64 @@ use {
 fn main() -> Result<(), Box<dyn Error>> {
     color_eyre::install()?;
     let mut warnings: Vec<AppWarning> = Vec::new();
+    let mut infos: Vec<AppInfo> = Vec::new();
+
     let result: Result<(), AppError> = (|| {
-        let action = handle_cli()?;
+        let action = handle_cli();
         match action {
             Action::Copy(paths) => {
-                if let Some(copy_warnings) = handle_transfer(paths, Operation::Copy)? {
+                let (copy_infos, copy_warnings) = handle_transfer(paths, Operation::Copy)?;
+                infos.extend(copy_infos);
+                if let Some(copy_warnings) = copy_warnings {
                     warnings.extend(copy_warnings);
                 }
             }
             Action::Cut(paths) => {
-                if let Some(cut_warnings) = handle_transfer(paths, Operation::Cut)? {
+                let (cut_infos, cut_warnings) = handle_transfer(paths, Operation::Cut)?;
+                infos.extend(cut_infos);
+                if let Some(cut_warnings) = cut_warnings {
                     warnings.extend(cut_warnings);
                 }
             }
             Action::Paste(path) => {
-                if let Some(paste_warnings) = handle_paste(path, None)? {
+                let (paste_infos, paste_warnings) = handle_paste(path, None)?;
+                infos.extend(paste_infos);
+                if let Some(paste_warnings) = paste_warnings {
                     warnings.extend(paste_warnings);
                 }
             }
-            Action::Clipboard => App::new(RecordType::Clipboard)?.run()?,
-            Action::History => App::new(RecordType::History)?.run()?,
-            Action::Help => {
-                eprintln!("Commands: copy <path>, cut <path>, paste, list, history");
+            Action::Clipboard => {
+                let tui_infos = App::new(RecordType::Clipboard)?.run()?;
+                infos.extend(tui_infos);
+            }
+            Action::History => {
+                let tui_infos = App::new(RecordType::History)?.run()?;
+                infos.extend(tui_infos);
             }
         }
         Ok(())
     })();
 
     if let Err(error) = result {
-        eprintln!("[Error]: ");
+        eprintln!("[Error]: {}", error);
         #[cfg(debug_assertions)]
-        eprintln!("{:#?}", error);
-        #[cfg(not(debug_assertions))]
-        eprintln!("{}", error);
+        eprintln!("DEBUG INFO: {:#?}", error);
         return Err(Box::from(error));
+    }
+
+    if !infos.is_empty() {
+        println!("[Info]: ");
+        for info in infos {
+            println!("{}", info);
+        }
     }
 
     if !warnings.is_empty() {
         println!("[Warning]: ");
         for warning in warnings {
-            println!("WARNING: {}", warning); // Use AppWarning's Display
+            println!("{}", warning);
             #[cfg(debug_assertions)]
-            println!("  DEBUG INFO: {:#?}", warning); // Show debug for devs
+            println!("DEBUG INFO: {:#?}", warning);
         }
     }
 

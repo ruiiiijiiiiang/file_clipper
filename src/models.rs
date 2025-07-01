@@ -5,7 +5,7 @@ use strum_macros::Display;
 use uuid::Uuid;
 
 use crate::{
-    exceptions::{FileError, FileWarning},
+    errors::{FileError, FileWarning},
     utils::get_metadata,
 };
 
@@ -100,7 +100,6 @@ pub enum Action {
     Paste(PathBuf),
     Clipboard,
     History,
-    Help,
 }
 
 pub struct PasteContent {
