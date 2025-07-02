@@ -13,7 +13,7 @@ use {
     errors::{AppError, AppInfo, AppWarning},
     file_handler::{handle_paste, handle_transfer},
     models::{Action, Operation, RecordType},
-    tui::App,
+    tui::Tui,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -46,11 +46,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             Action::Clipboard => {
-                let tui_infos = App::new(RecordType::Clipboard)?.run()?;
+                let tui_infos = Tui::new(RecordType::Clipboard)?.run()?;
                 infos.extend(tui_infos);
             }
             Action::History => {
-                let tui_infos = App::new(RecordType::History)?.run()?;
+                let tui_infos = Tui::new(RecordType::History)?.run()?;
                 infos.extend(tui_infos);
             }
         }

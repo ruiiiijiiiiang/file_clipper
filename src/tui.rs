@@ -38,7 +38,7 @@ const OPERATION_WIDTH: u16 = 10;
 const WARNING_TIMEOUT: u64 = 3;
 const POLL_INTERVAL: u64 = 100;
 
-pub struct App {
+pub struct Tui {
     pub entries: Vec<RecordEntry>,
     pub mode: RecordType,
     pub table_state: TableState,
@@ -51,7 +51,7 @@ pub struct App {
     pub infos: Vec<AppInfo>,
 }
 
-impl App {
+impl Tui {
     pub fn new(mode: RecordType) -> Result<Self, AppError> {
         let entries = match mode {
             RecordType::Clipboard => read_clipboard()?.unwrap_or(vec![]),
@@ -241,6 +241,13 @@ impl App {
                 Ok(())
             }
             KeyEvent {
+                code: KeyCode::Char('a'),
+                ..
+            } => {
+                self.mark_all();
+                Ok(())
+            }
+            KeyEvent {
                 code: KeyCode::Char('j') | KeyCode::Down,
                 ..
             } => {
@@ -365,6 +372,14 @@ impl App {
             if !self.invalid[selected] {
                 self.marked[selected] = !self.marked[selected];
             }
+        }
+    }
+
+    fn mark_all(&mut self) {
+        if self.marked.iter().any(|marked| !marked) {
+            self.marked = vec![true; self.entries.len()];
+        } else {
+            self.marked = vec![false; self.entries.len()];
         }
     }
 

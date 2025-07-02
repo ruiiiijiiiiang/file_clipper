@@ -14,9 +14,7 @@ use crate::{
     utils::{get_absolute_path, get_metadata},
 };
 
-pub fn handle_transfer<
-    P: AsRef<Path>,
->(
+pub fn handle_transfer<P: AsRef<Path>>(
     paths: Vec<P>,
     operation: Operation,
 ) -> Result<(Vec<AppInfo>, Option<Vec<AppWarning>>), AppError> {
@@ -52,9 +50,7 @@ pub fn handle_transfer<
     Ok((infos, warnings))
 }
 
-pub fn handle_paste<
-    P: AsRef<Path>,
->(
+pub fn handle_paste<P: AsRef<Path>>(
     destination_path: P,
     paste_content: Option<PasteContent>,
 ) -> Result<(Vec<AppInfo>, Option<Vec<AppWarning>>), AppError> {
@@ -126,18 +122,24 @@ pub fn handle_paste<
     let options = CopyOptions::new();
     for mut entry in entries_to_paste {
         let operation_result = match entry.operation {
-            Operation::Copy => copy_items(&[&entry.path], &destination_path, &options)
-                .map_err(|e| AppError::File(FileError::Copy {
-                    from_path: entry.path.clone(),
-                    to_path: destination_path.clone(),
-                    source: e,
-                })),
-            Operation::Cut => move_items(&[&entry.path], &destination_path, &options)
-                .map_err(|e| AppError::File(FileError::Move {
-                    from_path: entry.path.clone(),
-                    to_path: destination_path.clone(),
-                    source: e,
-                })),
+            Operation::Copy => {
+                copy_items(&[&entry.path], &destination_path, &options).map_err(|error| {
+                    FileError::Copy {
+                        from_path: entry.path.clone(),
+                        to_path: destination_path.clone(),
+                        source: error,
+                    }
+                })
+            }
+            Operation::Cut => {
+                move_items(&[&entry.path], &destination_path, &options).map_err(|error| {
+                    FileError::Move {
+                        from_path: entry.path.clone(),
+                        to_path: destination_path.clone(),
+                        source: error,
+                    }
+                })
+            }
         };
 
         match operation_result {
@@ -148,40 +150,62 @@ pub fn handle_paste<
                     new_path.push(file_name);
                     entry.path = new_path;
                 }
-                infos.push(AppInfo::Paste { path: entry.path.clone() });
+                infos.push(AppInfo::Paste {
+                    path: entry.path.clone(),
+                });
                 if let Some(history_entries) = history_entries.as_mut() {
                     history_entries.push_front(entry.clone());
                 }
             }
-            Err(AppError::File(FileError::Copy { from_path, to_path, source })) => {
-                match source.kind {
-                    ErrorKind::AlreadyExists => {
-                        warnings.push(AppWarning::File(FileWarning::AlreadyExists { path: from_path }));
-                    }
-                    ErrorKind::PermissionDenied => {
-                        warnings.push(AppWarning::File(FileWarning::NoPermission {
-                            path: from_path,
-                            destination: to_path,
-                        }));
-                    }
-                    _ => return Err(AppError::File(FileError::Copy { from_path, to_path, source })),
+            Err(FileError::Copy {
+                from_path,
+                to_path,
+                source,
+            }) => match source.kind {
+                ErrorKind::AlreadyExists => {
+                    warnings.push(AppWarning::File(FileWarning::AlreadyExists {
+                        path: from_path,
+                    }));
                 }
-            }
-            Err(AppError::File(FileError::Move { from_path, to_path, source })) => {
-                match source.kind {
-                    ErrorKind::AlreadyExists => {
-                        warnings.push(AppWarning::File(FileWarning::AlreadyExists { path: from_path }));
-                    }
-                    ErrorKind::PermissionDenied => {
-                        warnings.push(AppWarning::File(FileWarning::NoPermission {
-                            path: from_path,
-                            destination: to_path,
-                        }));
-                    }
-                    _ => return Err(AppError::File(FileError::Move { from_path, to_path, source })),
+                ErrorKind::PermissionDenied => {
+                    warnings.push(AppWarning::File(FileWarning::NoPermission {
+                        path: from_path,
+                        destination: to_path,
+                    }));
                 }
-            }
-            Err(e) => return Err(e),
+                _ => {
+                    return Err(AppError::File(FileError::Copy {
+                        from_path,
+                        to_path,
+                        source,
+                    }))
+                }
+            },
+            Err(FileError::Move {
+                from_path,
+                to_path,
+                source,
+            }) => match source.kind {
+                ErrorKind::AlreadyExists => {
+                    warnings.push(AppWarning::File(FileWarning::AlreadyExists {
+                        path: from_path,
+                    }));
+                }
+                ErrorKind::PermissionDenied => {
+                    warnings.push(AppWarning::File(FileWarning::NoPermission {
+                        path: from_path,
+                        destination: to_path,
+                    }));
+                }
+                _ => {
+                    return Err(AppError::File(FileError::Move {
+                        from_path,
+                        to_path,
+                        source,
+                    }))
+                }
+            },
+            Err(error) => return Err(AppError::File(error)),
         }
     }
 
@@ -192,7 +216,14 @@ pub fn handle_paste<
         let history_entries: Vec<RecordEntry> = history_entries.into();
         write_history(&history_entries)?;
     }
-    Ok((infos, if warnings.is_empty() { None } else { Some(warnings) }))
+    Ok((
+        infos,
+        if warnings.is_empty() {
+            None
+        } else {
+            Some(warnings)
+        },
+    ))
 }
 
 pub fn handle_remove(id: Uuid) -> Result<Option<RecordWarning>, RecordError> {
@@ -240,9 +271,7 @@ fn filter_invalid_entries(
     )
 }
 
-fn expand_paths<
-    P: AsRef<Path>,
->(
+fn expand_paths<P: AsRef<Path>>(
     paths: Vec<P>,
 ) -> Result<(Vec<PathBuf>, Option<Vec<AppWarning>>), FileError> {
     let mut expanded = Vec::new();
@@ -265,7 +294,10 @@ fn expand_paths<
 
                     if matched_paths.is_empty() {
                         warnings.push(
-                            FileWarning::GlobUnmatched { path: path.as_ref().to_path_buf() }.into(),
+                            FileWarning::GlobUnmatched {
+                                path: path.as_ref().to_path_buf(),
+                            }
+                            .into(),
                         );
                     } else {
                         matched_paths.sort();
@@ -293,3 +325,4 @@ fn expand_paths<
         },
     ))
 }
+

@@ -14,6 +14,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     #[command(alias = "cp")]
+    #[command(alias = "c")]
     #[command(alias = "y")]
     Copy {
         #[arg(required = true)]
@@ -21,6 +22,7 @@ enum Commands {
     },
 
     #[command(alias = "mv")]
+    #[command(alias = "d")]
     #[command(alias = "x")]
     Cut {
         #[arg(required = true)]
@@ -28,6 +30,7 @@ enum Commands {
     },
 
     #[command(alias = "p")]
+    #[command(alias = "v")]
     Paste {
         #[arg(default_value = ".")]
         path: PathBuf,
