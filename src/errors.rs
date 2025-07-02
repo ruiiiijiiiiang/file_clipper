@@ -19,52 +19,48 @@ pub enum AppError {
 
 #[derive(Debug, Error)]
 pub enum RecordError {
-    #[error("Failed to create configuration directory at '{path}'. Please check permissions or manually create it.")]
+    #[error("Could not create configuration directory at '{path}'. Please check permissions or create it manually.")]
     CreateConfigDir {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Failed to create record file at '{path}'. Please check permissions or disk space.")]
+    #[error("Could not create record file at '{path}'. Please check for sufficient permissions and available disk space.")]
     CreateRecordFile {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error(
-        "Failed to open record file at '{path}'. It might not exist or permissions are incorrect."
-    )]
+    #[error("Could not open record file at '{path}'. Please ensure the file exists and that you have permission to read it.")]
     OpenRecordFile {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Failed to read record file content from '{path}'. The file might be corrupted or unreadable.")]
+    #[error("Could not read from record file at '{path}'. The file may be corrupted or you may not have permission to read it.")]
     ReadRecordFile {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Failed to parse data in record file at '{path}'. The file might be corrupted or malformed TOML.")]
+    #[error("Could not parse data from record file at '{path}'. The file may be corrupted or have an invalid format.")]
     DeserializeRecordFile {
         path: PathBuf,
         #[source]
         source: toml::de::Error,
     },
 
-    #[error(
-        "Failed to save data to record file. There was an internal problem serializing the data."
-    )]
+    #[error("Could not prepare data for saving to the record file due to an internal error.")]
     SerializeRecordFile {
         #[source]
         source: toml::ser::Error,
     },
 
-    #[error("Failed to write to record file at '{path}'. Please check disk space or permissions.")]
+    #[error("Could not write to record file at '{path}'. Please check for sufficient permissions and available disk space.")]
     WriteRecordFile {
         path: PathBuf,
         #[source]
@@ -74,9 +70,7 @@ pub enum RecordError {
 
 #[derive(Debug, Error)]
 pub enum FileError {
-    #[error(
-        "The specified path '{path}' was not found. Please ensure it exists and is accessible."
-    )]
+    #[error("The specified path '{path}' was not found. Please ensure it exists and is accessible.")]
     PathNotFound { path: PathBuf },
 
     #[error("Could not determine the full path for '{path}'. Check if the path is valid or if there are permission issues.")]
@@ -92,14 +86,14 @@ pub enum FileError {
         source: IoError,
     },
 
-    #[error("Failed to access information about '{path}'. This might be due to incorrect permissions or a corrupted file system entry.")]
+    #[error("Could not access metadata for '{path}'. The path may be invalid or you may not have the necessary permissions.")]
     Metadata {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Failed to get the last modified time for '{path}'. This could be a permission issue or a problem with the file system.")]
+    #[error("Could not read the last modified time for '{path}'. The path may be invalid or you may not have the necessary permissions.")]
     ModifiedAccess {
         path: PathBuf,
         #[source]
@@ -109,7 +103,7 @@ pub enum FileError {
     #[error("The file type for '{path}' is not supported. This application expects a different kind of file or directory.")]
     UnsupportedType { path: PathBuf },
 
-    #[error("Failed to copy '{from_path}' to '{to_path}'. This could be a permission issue or a problem with the file system.")]
+    #[error("Could not copy '{from_path}' to '{to_path}'. Please check that the destination exists and that you have sufficient permissions.")]
     Copy {
         from_path: PathBuf,
         to_path: PathBuf,
@@ -117,7 +111,7 @@ pub enum FileError {
         source: FsError,
     },
 
-    #[error("Failed to move '{from_path}' to '{to_path}'. This could be a permission issue or a problem with the file system.")]
+    #[error("Could not move '{from_path}' to '{to_path}'. Please check that the destination exists and that you have sufficient permissions.")]
     Move {
         from_path: PathBuf,
         to_path: PathBuf,
@@ -125,14 +119,14 @@ pub enum FileError {
         source: FsError,
     },
 
-    #[error("Failed to read files using glob pattern '{path}'. This could be a permission issue or a problem with the file system.")]
+    #[error("Could not read files matching the pattern '{path}'. Please check the pattern and your file permissions.")]
     GlobUnreadable {
         path: PathBuf,
         #[source]
         source: GlobError,
     },
 
-    #[error("Failed to parse glob pattern '{path}'. This might be due to an invalid pattern.")]
+    #[error("The provided glob pattern '{path}' is invalid. Please check the syntax.")]
     GlobInvalidPattern {
         path: PathBuf,
         #[source]
@@ -141,31 +135,37 @@ pub enum FileError {
 }
 #[derive(Debug, Error)]
 pub enum TuiError {
-    #[error("Failed to draw to terminal: {source}")]
+    #[error("Could not get the terminal's cursor position. This can happen when running in a non-interactive session.")]
+    RetrieveCursorPosition {
+        #[source]
+        source: IoError,
+    },
+
+    #[error("A terminal error occurred while drawing the interface. Please try running the command again.")]
     TerminalDraw {
         #[source]
         source: IoError,
     },
 
-    #[error("Failed to poll for events: {source}")]
+    #[error("A terminal error occurred while waiting for input. Please try running the command again.")]
     EventPolling {
         #[source]
         source: IoError,
     },
 
-    #[error("Failed to read event: {source}")]
+    #[error("A terminal error occurred while reading input. Please try running the command again.")]
     EventRead {
         #[source]
         source: IoError,
     },
 
-    #[error("Failed to execute terminal command: {source}")]
+    #[error("A terminal error occurred while executing a command. Please try running the command again.")]
     TerminalCommand {
         #[source]
         source: IoError,
     },
 
-    #[error("Failed to handle terminal autoresize: {source}")]
+    #[error("A terminal error occurred while resizing the interface. Please try running the command again.")]
     TerminalAutoresize {
         #[source]
         source: IoError,
@@ -176,6 +176,7 @@ pub enum TuiError {
 pub enum AppWarning {
     #[error(transparent)]
     File(#[from] FileWarning),
+
     #[error(transparent)]
     Record(#[from] RecordWarning),
 }
@@ -185,18 +186,14 @@ pub enum FileWarning {
     #[error("File '{path}' was modified since last access. Consider reviewing recent changes.")]
     ModifiedMismatch { path: PathBuf },
 
-    #[error(
-        "File '{path}' changed type from {old_type} to {new_type}. This might indicate an unexpected alteration."
-    )]
+    #[error("File '{path}' changed type from {old_type} to {new_type}. This might indicate an unexpected alteration.")]
     TypeMismatch {
         path: PathBuf,
         old_type: String,
         new_type: String,
     },
 
-    #[error(
-        "File '{path}' changed size from {old_size} bytes to {new_size} bytes. Check if this change was intentional."
-    )]
+    #[error("File '{path}' changed size from {old_size} bytes to {new_size} bytes. Check if this change was intentional.")]
     SizeMismatch {
         path: PathBuf,
         old_size: u64,
@@ -205,13 +202,17 @@ pub enum FileWarning {
 
     #[error("Glob pattern '{path}' did not match any file.")]
     GlobUnmatched { path: PathBuf },
+
+    #[error("File '{path}' already exists at the destination.")]
+    AlreadyExists { path: PathBuf },
+
+    #[error("Permission denied for source '{path}' or destination '{destination}'.")]
+    NoPermission { path: PathBuf, destination: PathBuf },
 }
 
 #[derive(Debug, Error)]
 pub enum RecordWarning {
-    #[error(
-        "Failed to read record data from clipboard. This might be due to an internal error or a corrupted file."
-    )]
+    #[error("Could not read data from the clipboard file. It may be corrupted or inaccessible.")]
     ClipboardUnreadable,
 
     #[error("Specified entry was not found in the clipboard.")]

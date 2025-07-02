@@ -2,7 +2,7 @@ use shellexpand::tilde;
 use std::{
     fs::{create_dir_all, File},
     io::{ErrorKind, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Mutex,
 };
 use toml::{de::from_str as toml_from_str, ser::to_string as toml_to_string};
@@ -54,11 +54,12 @@ pub fn write_history(entries: &[RecordEntry]) -> Result<(), RecordError> {
     write_toml_file(&path, &HISTORY_MUTEX, record_data)
 }
 
-fn read_toml_file(
-    path: &PathBuf,
+fn read_toml_file<P: AsRef<Path>>(
+    path: P,
     mutex: &'static Mutex<()>,
 ) -> Result<Option<RecordData>, RecordError> {
     let _lock = mutex.lock().unwrap();
+    let path = path.as_ref();
 
     let mut file = match File::open(path) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
@@ -87,22 +88,23 @@ fn read_toml_file(
     }
 }
 
-fn write_toml_file(
-    path: &PathBuf,
+fn write_toml_file<P: AsRef<Path>>(
+    path: P,
     mutex: &'static Mutex<()>,
     data: RecordData,
 ) -> Result<(), RecordError> {
     let _lock = mutex.lock().unwrap();
+    let path = path.as_ref();
     match toml_to_string(&data) {
         Err(error) => Err(RecordError::SerializeRecordFile { source: error }),
         Ok(toml_string) => {
             let mut file = File::create(path).map_err(|error| RecordError::CreateRecordFile {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 source: error,
             })?;
             file.write_all(toml_string.as_bytes()).map_err(|error| {
                 RecordError::WriteRecordFile {
-                    path: path.clone(),
+                    path: path.to_path_buf(),
                     source: error,
                 }
             })?;
@@ -114,8 +116,9 @@ fn write_toml_file(
 fn get_storage_path(record_type: RecordType) -> Result<PathBuf, RecordError> {
     let path = PathBuf::from(tilde(STORAGE_DIR).as_ref());
     create_dir_all(&path).map_err(|error| RecordError::CreateConfigDir {
-        path: path.clone(),
+        path: path.to_path_buf(),
         source: error,
     })?;
     Ok(path.join(format!("{}.toml", record_type)))
 }
+

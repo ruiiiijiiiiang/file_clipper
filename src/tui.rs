@@ -1,6 +1,6 @@
 use chrono::{DateTime, Local};
 use crossterm::{
-    cursor::{MoveToColumn, MoveUp, Show},
+    cursor::{self, MoveTo, Show},
     event::{self, KeyCode, KeyEvent},
     execute,
     terminal::{Clear, ClearType},
@@ -110,10 +110,11 @@ impl App {
             }
         }
 
+        let final_cursor_position = cursor::position()
+            .map_err(|error| TuiError::RetrieveCursorPosition { source: error })?;
         execute!(
             stdout(),
-            MoveToColumn(0),
-            MoveUp(HEIGHT),
+            MoveTo(0, final_cursor_position.1 - HEIGHT + 1),
             Clear(ClearType::FromCursorDown),
             Show
         )
@@ -300,11 +301,7 @@ impl App {
                 Ok(())
             }
             KeyEvent {
-                code: KeyCode::Char('x'),
-                ..
-            } => self.remove(),
-            KeyEvent {
-                code: KeyCode::Char('d'),
+                code: KeyCode::Char('x') | KeyCode::Char('d'),
                 ..
             } => self.remove(),
             KeyEvent {
@@ -313,6 +310,11 @@ impl App {
             } => self.paste(),
             KeyEvent {
                 code: KeyCode::Char('q'),
+                ..
+            }
+            | KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: event::KeyModifiers::CONTROL,
                 ..
             } => {
                 self.exit();
@@ -385,7 +387,7 @@ impl App {
     fn paste(&mut self) -> Result<(), AppError> {
         let destination_path =
             env::current_dir().map_err(|error| FileError::Cwd { source: error })?;
-        let marked_entries = self
+        let mut marked_entries: Vec<RecordEntry> = self
             .entries
             .clone()
             .into_iter()
@@ -400,6 +402,11 @@ impl App {
                 },
             )
             .collect();
+        if marked_entries.is_empty() {
+            if let Some(selected) = self.table_state.selected() {
+                marked_entries.push(self.entries[selected].clone());
+            }
+        }
         let paste_content = PasteContent {
             entries: marked_entries,
             source: self.mode.clone(),
@@ -422,4 +429,3 @@ impl App {
         self.should_exit = true;
     }
 }
-
