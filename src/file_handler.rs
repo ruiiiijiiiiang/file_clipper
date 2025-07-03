@@ -1,7 +1,9 @@
-use fs_extra::{copy_items, dir::CopyOptions, error::ErrorKind, move_items};
+use fs_extra::{copy_items, dir::CopyOptions, error::ErrorKind as FsErrorKind, move_items};
 use glob::glob;
 use std::{
     collections::{HashSet, VecDeque},
+    io::ErrorKind as IoErrorKind,
+    os::unix::fs::symlink,
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -129,7 +131,8 @@ pub fn handle_paste<P: AsRef<Path>>(
                         to_path: destination_path.clone(),
                         source: error,
                     }
-                })
+                })?;
+                Ok(())
             }
             Operation::Cut => {
                 move_items(&[&entry.path], &destination_path, &options).map_err(|error| {
@@ -138,14 +141,30 @@ pub fn handle_paste<P: AsRef<Path>>(
                         to_path: destination_path.clone(),
                         source: error,
                     }
-                })
+                })?;
+                Ok(())
+            }
+            Operation::Link => {
+                let file_name = entry.path.file_name().ok_or_else(|| FileError::FileName {
+                    path: entry.path.clone(),
+                })?;
+                let mut new_path = destination_path.clone();
+                new_path.push(file_name);
+                symlink(&entry.path, &new_path).map_err(|error| FileError::Link {
+                    from_path: entry.path.clone(),
+                    to_path: destination_path.clone(),
+                    source: error,
+                })?;
+                Ok(())
             }
         };
 
         match operation_result {
             Ok(_) => {
                 if let Operation::Cut = entry.operation {
-                    let file_name = entry.path.file_name().unwrap();
+                    let file_name = entry.path.file_name().ok_or_else(|| FileError::FileName {
+                        path: entry.path.clone(),
+                    })?;
                     let mut new_path = destination_path.clone();
                     new_path.push(file_name);
                     entry.path = new_path;
@@ -161,13 +180,18 @@ pub fn handle_paste<P: AsRef<Path>>(
                 from_path,
                 to_path,
                 source,
+            })
+            | Err(FileError::Move {
+                from_path,
+                to_path,
+                source,
             }) => match source.kind {
-                ErrorKind::AlreadyExists => {
+                FsErrorKind::AlreadyExists => {
                     warnings.push(AppWarning::File(FileWarning::AlreadyExists {
                         path: from_path,
                     }));
                 }
-                ErrorKind::PermissionDenied => {
+                FsErrorKind::PermissionDenied => {
                     warnings.push(AppWarning::File(FileWarning::NoPermission {
                         path: from_path,
                         destination: to_path,
@@ -181,24 +205,24 @@ pub fn handle_paste<P: AsRef<Path>>(
                     }))
                 }
             },
-            Err(FileError::Move {
+            Err(FileError::Link {
                 from_path,
                 to_path,
                 source,
-            }) => match source.kind {
-                ErrorKind::AlreadyExists => {
+            }) => match source.kind() {
+                IoErrorKind::AlreadyExists => {
                     warnings.push(AppWarning::File(FileWarning::AlreadyExists {
                         path: from_path,
                     }));
                 }
-                ErrorKind::PermissionDenied => {
+                IoErrorKind::PermissionDenied => {
                     warnings.push(AppWarning::File(FileWarning::NoPermission {
                         path: from_path,
                         destination: to_path,
                     }));
                 }
                 _ => {
-                    return Err(AppError::File(FileError::Move {
+                    return Err(AppError::File(FileError::Link {
                         from_path,
                         to_path,
                         source,
@@ -325,4 +349,3 @@ fn expand_paths<P: AsRef<Path>>(
         },
     ))
 }
-

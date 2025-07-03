@@ -18,7 +18,7 @@ use {
 
 fn main() -> Result<(), Box<dyn Error>> {
     color_eyre::install()?;
-    let mut warnings: Vec<AppWarning> = Vec::new();
+    let mut app_warnings: Vec<AppWarning> = Vec::new();
     let mut infos: Vec<AppInfo> = Vec::new();
 
     let result: Result<(), AppError> = (|| {
@@ -27,22 +27,29 @@ fn main() -> Result<(), Box<dyn Error>> {
             Action::Copy(paths) => {
                 let (copy_infos, copy_warnings) = handle_transfer(paths, Operation::Copy)?;
                 infos.extend(copy_infos);
-                if let Some(copy_warnings) = copy_warnings {
-                    warnings.extend(copy_warnings);
+                if let Some(warnings) = copy_warnings {
+                    app_warnings.extend(warnings);
                 }
             }
             Action::Cut(paths) => {
                 let (cut_infos, cut_warnings) = handle_transfer(paths, Operation::Cut)?;
                 infos.extend(cut_infos);
-                if let Some(cut_warnings) = cut_warnings {
-                    warnings.extend(cut_warnings);
+                if let Some(warnings) = cut_warnings {
+                    app_warnings.extend(warnings);
+                }
+            }
+            Action::Link(paths) => {
+                let (cut_infos, cut_warnings) = handle_transfer(paths, Operation::Link)?;
+                infos.extend(cut_infos);
+                if let Some(warnings) = cut_warnings {
+                    app_warnings.extend(warnings);
                 }
             }
             Action::Paste(path) => {
                 let (paste_infos, paste_warnings) = handle_paste(path, None)?;
                 infos.extend(paste_infos);
-                if let Some(paste_warnings) = paste_warnings {
-                    warnings.extend(paste_warnings);
+                if let Some(warnings) = paste_warnings {
+                    app_warnings.extend(warnings);
                 }
             }
             Action::Clipboard => {
@@ -71,9 +78,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    if !warnings.is_empty() {
+    if !app_warnings.is_empty() {
         println!("[Warning]: ");
-        for warning in warnings {
+        for warning in app_warnings {
             println!("{}", warning);
             #[cfg(debug_assertions)]
             println!("DEBUG INFO: {:#?}", warning);

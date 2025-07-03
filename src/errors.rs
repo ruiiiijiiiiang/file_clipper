@@ -70,7 +70,9 @@ pub enum RecordError {
 
 #[derive(Debug, Error)]
 pub enum FileError {
-    #[error("The specified path '{path}' was not found. Please ensure it exists and is accessible.")]
+    #[error(
+        "The specified path '{path}' was not found. Please ensure it exists and is accessible."
+    )]
     PathNotFound { path: PathBuf },
 
     #[error("Could not determine the full path for '{path}'. Check if the path is valid or if there are permission issues.")]
@@ -92,6 +94,9 @@ pub enum FileError {
         #[source]
         source: IoError,
     },
+
+    #[error("Could not determine the file name for '{path}'. The path may be invalid or you may not have the necessary permissions.")]
+    FileName { path: PathBuf },
 
     #[error("Could not read the last modified time for '{path}'. The path may be invalid or you may not have the necessary permissions.")]
     ModifiedAccess {
@@ -117,6 +122,14 @@ pub enum FileError {
         to_path: PathBuf,
         #[source]
         source: FsError,
+    },
+
+    #[error("Could not create a symlink to '{from_path}' at '{to_path}'. Please check that the destination exists and that you have sufficient permissions.")]
+    Link {
+        from_path: PathBuf,
+        to_path: PathBuf,
+        #[source]
+        source: IoError,
     },
 
     #[error("Could not read files matching the pattern '{path}'. Please check the pattern and your file permissions.")]
@@ -147,13 +160,17 @@ pub enum TuiError {
         source: IoError,
     },
 
-    #[error("A terminal error occurred while waiting for input. Please try running the command again.")]
+    #[error(
+        "A terminal error occurred while waiting for input. Please try running the command again."
+    )]
     EventPolling {
         #[source]
         source: IoError,
     },
 
-    #[error("A terminal error occurred while reading input. Please try running the command again.")]
+    #[error(
+        "A terminal error occurred while reading input. Please try running the command again."
+    )]
     EventRead {
         #[source]
         source: IoError,

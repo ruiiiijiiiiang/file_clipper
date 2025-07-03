@@ -10,6 +10,9 @@
 - **Cut/Move Files:** Move one or more files to a temporary clipboard.
   - `file-clipper cut <path>...`
   - Aliases: `mv`, `x`, `d`
+- **Link Files:** Copy one or more files as symbolic links.
+  - `file-clipper link <path>...`
+  - Aliases: `ln`, `s`
 - **Paste Files:** Paste files from the clipboard to a specified destination.
   - `file-clipper paste [destination_path]`
   - Alias: `p`, `v`
@@ -49,6 +52,9 @@ file-clipper cp 'images/*.png'
 
 # Cut a directory
 file-clipper cut my_folder/
+
+# Copy a file as a symlink
+file-clipper ln .dotfile
 
 # Paste files to the current directory
 file-clipper paste

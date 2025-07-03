@@ -29,6 +29,13 @@ enum Commands {
         paths: Vec<PathBuf>,
     },
 
+    #[command(alias = "ln")]
+    #[command(alias = "s")]
+    Link {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
+
     #[command(alias = "p")]
     #[command(alias = "v")]
     Paste {
@@ -50,6 +57,7 @@ pub fn handle_cli() -> Action {
     match cli.command {
         Commands::Copy { paths } => Action::Copy(paths),
         Commands::Cut { paths } => Action::Cut(paths),
+        Commands::Link { paths } => Action::Link(paths),
         Commands::Paste { path } => Action::Paste(path),
         Commands::List => Action::Clipboard,
         Commands::History => Action::History,

@@ -15,6 +15,8 @@ pub enum Operation {
     Copy,
     #[strum(to_string = "cut")]
     Cut,
+    #[strum(to_string = "link")]
+    Link,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Display)]
@@ -97,6 +99,7 @@ pub struct RecordData {
 pub enum Action {
     Copy(Vec<PathBuf>),
     Cut(Vec<PathBuf>),
+    Link(Vec<PathBuf>),
     Paste(PathBuf),
     Clipboard,
     History,
