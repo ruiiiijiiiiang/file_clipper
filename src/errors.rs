@@ -71,6 +71,15 @@ pub enum RecordError {
         #[source]
         source: IoError,
     },
+
+    #[error(
+        "Could not delete record file at '{path}'. Please check permissions or try again later."
+    )]
+    ClearRecords {
+        path: PathBuf,
+        #[source]
+        source: IoError,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -153,12 +162,6 @@ pub enum FileError {
 }
 #[derive(Debug, Error)]
 pub enum TuiError {
-    #[error("Could not get the terminal's cursor position. This can happen when running in a non-interactive session.")]
-    RetrieveCursorPosition {
-        #[source]
-        source: IoError,
-    },
-
     #[error("A terminal error occurred while drawing the interface. Please try running the command again.")]
     TerminalDraw {
         #[source]
@@ -177,12 +180,6 @@ pub enum TuiError {
         "A terminal error occurred while reading input. Please try running the command again."
     )]
     EventRead {
-        #[source]
-        source: IoError,
-    },
-
-    #[error("A terminal error occurred while executing a command. Please try running the command again.")]
-    TerminalCommand {
         #[source]
         source: IoError,
     },
@@ -246,6 +243,9 @@ pub enum AppInfo {
     #[error("{operation} {path}")]
     Transfer { operation: Operation, path: PathBuf },
 
-    #[error("paste {path}")]
+    #[error("Pasted {path}")]
     Paste { path: PathBuf },
+
+    #[error("Deleted records from {path}")]
+    Clear { path: PathBuf },
 }

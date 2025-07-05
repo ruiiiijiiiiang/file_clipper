@@ -1,10 +1,5 @@
 use chrono::{DateTime, Local};
-use crossterm::{
-    cursor::{self, MoveTo, Show},
-    event::{self, Event, KeyCode, KeyEvent},
-    execute,
-    terminal::{Clear, ClearType},
-};
+use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{
@@ -18,7 +13,7 @@ use ratatui::{
     },
     Frame, TerminalOptions, Viewport,
 };
-use std::{env::current_dir, io::stdout, time::Duration};
+use std::{env::current_dir, time::Duration};
 
 use crate::{
     errors::{AppError, AppInfo, AppWarning, FileError, TuiError},
@@ -77,8 +72,6 @@ impl Tui {
         let mut terminal = ratatui::init_with_options(TerminalOptions {
             viewport: Viewport::Inline(HEIGHT),
         });
-        let start_y =
-            cursor::position().map_err(|error| TuiError::RetrieveCursorPosition { source: error })?.1;
 
         let loop_result = (|| {
             loop {
@@ -107,12 +100,11 @@ impl Tui {
             Ok(())
         })();
 
-        let cleanup_result = self.clean_up(start_y);
-
-        match (loop_result, cleanup_result) {
-            (Ok(_), Ok(_)) => Ok((self.infos, self.warnings)),
-            (Err(e), _) => Err(e),
-            (Ok(_), Err(e)) => Err(e.into()),
+        let _ = terminal.clear();
+        ratatui::restore();
+        match loop_result {
+            Ok(_) => Ok((self.infos, self.warnings)),
+            Err(error) => Err(error),
         }
     }
 
@@ -427,18 +419,6 @@ impl Tui {
 
     fn exit(&mut self) {
         self.should_exit = true;
-    }
-
-    fn clean_up(&mut self, start_y: u16) -> Result<(), TuiError> {
-        execute!(
-            stdout(),
-            MoveTo(0, start_y),
-            Clear(ClearType::FromCursorDown),
-            Show
-        )
-        .map_err(|error| TuiError::TerminalCommand { source: error })?;
-        ratatui::restore();
-        Ok(())
     }
 }
 

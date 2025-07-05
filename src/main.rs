@@ -15,6 +15,7 @@ use {
     errors::{AppError, AppInfo, AppWarning},
     files::{handle_paste, handle_transfer},
     models::{Action, Operation, RecordType},
+    records::clear_records,
     tui::Tui,
 };
 
@@ -55,6 +56,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let (tui_infos, tui_warnings) = Tui::new(RecordType::History)?.run()?;
                 app_infos.extend(tui_infos);
                 app_warnings.extend(tui_warnings);
+            }
+            Action::Clear => {
+                let clear_infos = clear_records()?;
+                app_infos.extend(clear_infos);
             }
         }
         Ok(())

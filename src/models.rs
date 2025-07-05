@@ -62,6 +62,7 @@ pub enum Action {
     Paste(PathBuf),
     Clipboard,
     History,
+    Clear,
 }
 
 #[derive(Debug, Clone)]
@@ -69,3 +70,4 @@ pub struct PasteContent {
     pub entries: Vec<RecordEntry>,
     pub source: RecordType,
 }
+

@@ -49,6 +49,9 @@ enum Commands {
 
     #[command(alias = "h")]
     History,
+
+    #[command()]
+    Clear,
 }
 
 pub fn handle_cli() -> Action {
@@ -61,5 +64,6 @@ pub fn handle_cli() -> Action {
         Commands::Paste { path } => Action::Paste(path),
         Commands::List => Action::Clipboard,
         Commands::History => Action::History,
+        Commands::Clear => Action::Clear,
     }
 }

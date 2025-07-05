@@ -1,6 +1,6 @@
 use std::{
     env::home_dir,
-    fs::{create_dir_all, File},
+    fs::{create_dir_all, remove_file, File},
     io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     sync::Mutex,
@@ -9,7 +9,7 @@ use toml::{de::from_str as toml_from_str, ser::to_string as toml_to_string};
 use uuid::Uuid;
 
 use crate::{
-    errors::{AppError, AppWarning, RecordError, RecordWarning},
+    errors::{AppError, AppInfo, AppWarning, RecordError, RecordWarning},
     models::{RecordData, RecordEntry, RecordType},
 };
 
@@ -114,6 +114,23 @@ pub fn handle_remove(id: Uuid) -> Result<Vec<AppWarning>, AppError> {
         write_clipboard(&filtered_entries)?
     }
     Ok(warnings)
+}
+
+pub fn clear_records() -> Result<Vec<AppInfo>, AppError> {
+    let mut infos = Vec::new();
+    let record_path = get_storage_path(RecordType::Clipboard)?;
+    remove_file(&record_path).map_err(|error| RecordError::ClearRecords {
+        path: record_path.clone(),
+        source: error,
+    })?;
+    infos.push(AppInfo::Clear { path: record_path });
+    let history_path = get_storage_path(RecordType::History)?;
+    remove_file(&history_path).map_err(|error| RecordError::ClearRecords {
+        path: history_path.clone(),
+        source: error,
+    })?;
+    infos.push(AppInfo::Clear { path: history_path });
+    Ok(infos)
 }
 
 fn write_toml_file<P: AsRef<Path>>(
@@ -293,5 +310,54 @@ mod tests {
             result[0],
             AppWarning::Record(RecordWarning::EntryNotFound)
         ));
+    }
+
+    #[test]
+    #[serial]
+    fn test_clear_records_success() {
+        let _env = setup_test_env();
+
+        let clipboard_entry = create_mock_record_entry(None, None, None, None, None);
+        write_clipboard(&[clipboard_entry]).unwrap();
+        let history_entry = create_mock_record_entry(None, None, None, None, None);
+        write_history(&[history_entry]).unwrap();
+
+        let clipboard_path = get_storage_path(RecordType::Clipboard).unwrap();
+        let history_path = get_storage_path(RecordType::History).unwrap();
+
+        assert!(clipboard_path.exists());
+        assert!(history_path.exists());
+
+        let result = clear_records().unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert!(matches!(&result[0], AppInfo::Clear { path: p } if p == &clipboard_path));
+        assert!(matches!(&result[1], AppInfo::Clear { path: p } if p == &history_path));
+
+        assert!(!clipboard_path.exists());
+        assert!(!history_path.exists());
+    }
+
+    #[test]
+    #[serial]
+    fn test_clear_records_files_not_found() {
+        let _env = setup_test_env();
+
+        let clipboard_path = get_storage_path(RecordType::Clipboard).unwrap();
+        let history_path = get_storage_path(RecordType::History).unwrap();
+
+        assert!(!clipboard_path.exists());
+        assert!(!history_path.exists());
+
+        let result = clear_records();
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::Record(RecordError::ClearRecords { path, source }) => {
+                assert_eq!(path, clipboard_path);
+                assert_eq!(source.kind(), ErrorKind::NotFound);
+            }
+            other => panic!("Expected ClearRecords error, but got {:?}", other),
+        }
     }
 }
