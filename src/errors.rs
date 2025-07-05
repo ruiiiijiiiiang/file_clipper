@@ -19,6 +19,11 @@ pub enum AppError {
 
 #[derive(Debug, Error)]
 pub enum RecordError {
+    #[error(
+        "Could not get the user's home directory. Please check your permissions and try again."
+    )]
+    GetHomeDir,
+
     #[error("Could not create configuration directory at '{path}'. Please check permissions or create it manually.")]
     CreateConfigDir {
         path: PathBuf,

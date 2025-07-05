@@ -2,16 +2,18 @@ use std::error::Error;
 
 mod cli;
 mod errors;
-mod file_handler;
+mod files;
 mod models;
 mod records;
 mod tui;
-mod utils;
+
+#[cfg(test)]
+pub mod test_helpers;
 
 use {
     cli::handle_cli,
     errors::{AppError, AppInfo, AppWarning},
-    file_handler::{handle_paste, handle_transfer},
+    files::{handle_paste, handle_transfer},
     models::{Action, Operation, RecordType},
     tui::Tui,
 };
@@ -19,46 +21,40 @@ use {
 fn main() -> Result<(), Box<dyn Error>> {
     color_eyre::install()?;
     let mut app_warnings: Vec<AppWarning> = Vec::new();
-    let mut infos: Vec<AppInfo> = Vec::new();
+    let mut app_infos: Vec<AppInfo> = Vec::new();
 
     let result: Result<(), AppError> = (|| {
         let action = handle_cli();
         match action {
             Action::Copy(paths) => {
                 let (copy_infos, copy_warnings) = handle_transfer(paths, Operation::Copy)?;
-                infos.extend(copy_infos);
-                if let Some(warnings) = copy_warnings {
-                    app_warnings.extend(warnings);
-                }
+                app_infos.extend(copy_infos);
+                app_warnings.extend(copy_warnings);
             }
             Action::Cut(paths) => {
                 let (cut_infos, cut_warnings) = handle_transfer(paths, Operation::Cut)?;
-                infos.extend(cut_infos);
-                if let Some(warnings) = cut_warnings {
-                    app_warnings.extend(warnings);
-                }
+                app_infos.extend(cut_infos);
+                app_warnings.extend(cut_warnings);
             }
             Action::Link(paths) => {
-                let (cut_infos, cut_warnings) = handle_transfer(paths, Operation::Link)?;
-                infos.extend(cut_infos);
-                if let Some(warnings) = cut_warnings {
-                    app_warnings.extend(warnings);
-                }
+                let (link_infos, link_warnings) = handle_transfer(paths, Operation::Link)?;
+                app_infos.extend(link_infos);
+                app_warnings.extend(link_warnings);
             }
             Action::Paste(path) => {
                 let (paste_infos, paste_warnings) = handle_paste(path, None)?;
-                infos.extend(paste_infos);
-                if let Some(warnings) = paste_warnings {
-                    app_warnings.extend(warnings);
-                }
+                app_infos.extend(paste_infos);
+                app_warnings.extend(paste_warnings);
             }
             Action::Clipboard => {
-                let tui_infos = Tui::new(RecordType::Clipboard)?.run()?;
-                infos.extend(tui_infos);
+                let (tui_infos, tui_warnings) = Tui::new(RecordType::Clipboard)?.run()?;
+                app_infos.extend(tui_infos);
+                app_warnings.extend(tui_warnings);
             }
             Action::History => {
-                let tui_infos = Tui::new(RecordType::History)?.run()?;
-                infos.extend(tui_infos);
+                let (tui_infos, tui_warnings) = Tui::new(RecordType::History)?.run()?;
+                app_infos.extend(tui_infos);
+                app_warnings.extend(tui_warnings);
             }
         }
         Ok(())
@@ -71,9 +67,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(Box::from(error));
     }
 
-    if !infos.is_empty() {
+    if !app_infos.is_empty() {
         println!("[Info]: ");
-        for info in infos {
+        for info in app_infos {
             println!("{}", info);
         }
     }

@@ -24,7 +24,6 @@
   - `file-clipper history`
   - Alias: `h`
 - **Interactive TUI:** The `list` and `history` commands launch an interactive terminal interface, allowing you to select specific files for pasting and manage entries with ease.
-- **Robust Error Handling:** Provides clear, user-friendly error and warning messages for issues like file not found, permission denied, or file already exists.
 - **Glob Pattern Support:** Supports glob patterns for selecting multiple files (e.g., `*.txt`, `src/**/*.rs`).
 
 ### Clipboard and History Mechanics
@@ -86,4 +85,4 @@ Contributions are welcome! Please feel free to open issues or submit pull reques
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](./LICENSE).

@@ -1,41 +1,36 @@
 use chrono::{DateTime, Local};
 use crossterm::{
     cursor::{self, MoveTo, Show},
-    event::{self, KeyCode, KeyEvent},
+    event::{self, Event, KeyCode, KeyEvent},
     execute,
     terminal::{Clear, ClearType},
 };
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{
-        palette::tailwind::{AMBER, BLUE, EMERALD, GRAY},
-        Modifier, Style,
+        palette::tailwind::{BLUE, EMERALD, GRAY},
+        Modifier, Style, Stylize,
     },
     text::Line,
     widgets::{
-        Block, Borders, Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+        Block, Borders, Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation,
         ScrollbarState, Table, TableState,
     },
     Frame, TerminalOptions, Viewport,
 };
-use std::{
-    env,
-    io::stdout,
-    time::{Duration, Instant},
-};
+use std::{env::current_dir, io::stdout, time::Duration};
 
 use crate::{
     errors::{AppError, AppInfo, AppWarning, FileError, TuiError},
-    file_handler::{handle_paste, handle_remove},
+    files::{get_metadata, handle_paste},
     models::{PasteContent, RecordEntry, RecordType},
-    records::{read_clipboard, read_history},
-    utils::get_metadata,
+    records::{handle_remove, read_clipboard, read_history},
 };
 
 const HEIGHT: u16 = 20;
-const TIMESTAMP_WIDTH: u16 = 30;
 const OPERATION_WIDTH: u16 = 10;
-const WARNING_TIMEOUT: u64 = 3;
+const SELECTED_WIDTH: u16 = 8;
+const TIMESTAMP_WIDTH: u16 = 30;
 const POLL_INTERVAL: u64 = 100;
 
 pub struct Tui {
@@ -47,9 +42,14 @@ pub struct Tui {
     pub marked: Vec<bool>,
     pub should_exit: bool,
     pub warnings: Vec<AppWarning>,
-    pub warning_timer: Option<Instant>,
     pub infos: Vec<AppInfo>,
 }
+
+type ColumnDef<'a> = (
+    &'static str,
+    Constraint,
+    Box<dyn Fn(usize, &RecordEntry) -> String + 'a>,
+);
 
 impl Tui {
     pub fn new(mode: RecordType) -> Result<Self, AppError> {
@@ -69,147 +69,138 @@ impl Tui {
             entries,
             mode,
             warnings: Vec::new(),
-            warning_timer: None,
             infos: Vec::new(),
         })
     }
 
-    pub fn run(mut self) -> Result<Vec<AppInfo>, AppError> {
+    pub fn run(mut self) -> Result<(Vec<AppInfo>, Vec<AppWarning>), AppError> {
         let mut terminal = ratatui::init_with_options(TerminalOptions {
             viewport: Viewport::Inline(HEIGHT),
         });
+        let start_y =
+            cursor::position().map_err(|error| TuiError::RetrieveCursorPosition { source: error })?.1;
 
-        loop {
-            if self.should_exit {
-                break;
-            }
+        let loop_result = (|| {
+            loop {
+                if self.should_exit {
+                    break;
+                }
 
-            if let Some(timer) = self.warning_timer {
-                if timer.elapsed() > Duration::from_secs(WARNING_TIMEOUT) {
-                    self.warnings.clear();
-                    self.warning_timer = None;
+                terminal
+                    .draw(|frame| {
+                        self.render_ui(frame, frame.area());
+                    })
+                    .map_err(|error| TuiError::TerminalDraw { source: error })?;
+
+                if event::poll(Duration::from_millis(POLL_INTERVAL))
+                    .map_err(|error| TuiError::EventPolling { source: error })?
+                {
+                    match event::read().map_err(|error| TuiError::EventRead { source: error })? {
+                        Event::Key(key) => self.handle_keypress(key)?,
+                        Event::Resize(_, _) => terminal
+                            .autoresize()
+                            .map_err(|error| TuiError::TerminalAutoresize { source: error })?,
+                        _ => {}
+                    };
                 }
             }
+            Ok(())
+        })();
 
-            terminal
-                .draw(|frame| {
-                    self.render_ui(frame, frame.area());
-                })
-                .map_err(|error| TuiError::TerminalDraw { source: error })?;
+        let cleanup_result = self.clean_up(start_y);
 
-            if event::poll(Duration::from_millis(POLL_INTERVAL))
-                .map_err(|error| TuiError::EventPolling { source: error })?
-            {
-                match event::read().map_err(|error| TuiError::EventRead { source: error })? {
-                    event::Event::Key(key) => self.handle_keypress(key)?,
-                    event::Event::Resize(_, _) => terminal
-                        .autoresize()
-                        .map_err(|error| TuiError::TerminalAutoresize { source: error })?,
-                    _ => {}
-                };
-            }
+        match (loop_result, cleanup_result) {
+            (Ok(_), Ok(_)) => Ok((self.infos, self.warnings)),
+            (Err(e), _) => Err(e),
+            (Ok(_), Err(e)) => Err(e.into()),
         }
-
-        let final_cursor_position = cursor::position()
-            .map_err(|error| TuiError::RetrieveCursorPosition { source: error })?;
-        execute!(
-            stdout(),
-            MoveTo(0, final_cursor_position.1 - HEIGHT + 1),
-            Clear(ClearType::FromCursorDown),
-            Show
-        )
-        .map_err(|error| TuiError::TerminalCommand { source: error })?;
-        ratatui::restore();
-        Ok(self.infos)
     }
 
     fn render_ui(&mut self, frame: &mut Frame, area: Rect) {
-        let warning_height = if self.warnings.is_empty() {
-            0
-        } else {
-            self.warnings.len() as u16
-        };
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(warning_height)])
-            .split(area);
-
-        let main_area = chunks[0];
-        let warning_area = chunks[1];
-
-        self.render_table(frame, main_area);
-        self.render_scrollbar(frame, main_area);
-
-        if !self.warnings.is_empty() {
-            let warning_text = self
-                .warnings
-                .iter()
-                .map(|w| w.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-            let paragraph = Paragraph::new(warning_text).style(Style::default().fg(AMBER.c400));
-            frame.render_widget(paragraph, warning_area);
-        }
+        self.render_table(frame, area);
+        self.render_scrollbar(frame, area);
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
-        let header = ["Path", "Accessed", "Operation"]
-            .into_iter()
-            .map(Cell::from)
+        let column_definitions: [ColumnDef; 4] = [
+            (
+                "Selected",
+                Constraint::Length(SELECTED_WIDTH),
+                Box::new(|index, _| {
+                    if self.marked[index] {
+                        "[X]".to_string()
+                    } else {
+                        "[ ]".to_string()
+                    }
+                }),
+            ),
+            (
+                "Operation",
+                Constraint::Length(OPERATION_WIDTH),
+                Box::new(|_, entry| entry.operation.to_string()),
+            ),
+            (
+                "Accessed",
+                Constraint::Length(TIMESTAMP_WIDTH),
+                Box::new(|_, entry| {
+                    let local_datetime: DateTime<Local> = entry.timestamp.into();
+                    local_datetime.format("%a, %d %b %Y %H:%M:%S").to_string()
+                }),
+            ),
+            (
+                "Path",
+                Constraint::Min(0),
+                Box::new(|_, entry| entry.path.to_string_lossy().into_owned()),
+            ),
+        ];
+
+        let header = column_definitions
+            .iter()
+            .map(|(header, _, _)| Cell::from(*header))
             .collect::<Row>()
             .style(Style::default().add_modifier(Modifier::BOLD))
             .height(1);
+
+        let constraints: Vec<Constraint> = column_definitions
+            .iter()
+            .map(|(_, constraint, _)| *constraint)
+            .collect();
 
         let rows = self.entries.iter().enumerate().map(|(index, entry)| {
             let valid = get_metadata(&entry.path).is_ok();
             self.invalid[index] = !valid;
 
             let style = if !valid {
-                Style::default().fg(GRAY.c500)
+                Style::default().fg(GRAY.c500).crossed_out()
             } else if self.marked[index] {
                 Style::default().fg(EMERALD.c300)
             } else {
                 Style::default()
             };
 
-            let path_display = entry.path.to_string_lossy().into_owned();
-
-            let local_datetime: DateTime<Local> = entry.timestamp.into();
-            let datetime_display = local_datetime.format("%a, %d %b %Y %H:%M:%S").to_string();
-
-            let operation_display = entry.operation.to_string();
-
-            let cells = [path_display, datetime_display, operation_display]
-                .into_iter()
-                .map(Cell::from);
+            let cells = column_definitions
+                .iter()
+                .map(|(_, _, render_entry)| Cell::from(render_entry(index, entry)));
             Row::new(cells).style(style)
         });
+
+        let table = Table::new(rows, constraints)
+            .block(
+                Block::default()
+                    .title(format!("File Clipper - {}", self.mode))
+                    .borders(Borders::ALL)
+                    .title_bottom(
+                        Line::from("Navigation: j/k; Select: space; Paste: p; Quit: q").centered(),
+                    ),
+            )
+            .header(header)
+            .highlight_spacing(HighlightSpacing::Always)
+            .row_highlight_style(Style::default().bg(BLUE.c800));
 
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(0), Constraint::Length(1)])
             .split(area);
-
-        let table = Table::new(
-            rows,
-            [
-                Constraint::Min(0),
-                Constraint::Length(TIMESTAMP_WIDTH),
-                Constraint::Length(OPERATION_WIDTH),
-            ],
-        )
-        .block(
-            Block::default()
-                .title(format!("File Clipper - {}", self.mode))
-                .borders(Borders::ALL)
-                .title_bottom(
-                    Line::from("Navigation: j/k; Select: space; Paste: p; Quit: q").centered(),
-                ),
-        )
-        .header(header)
-        .highlight_spacing(HighlightSpacing::Always)
-        .row_highlight_style(Style::default().bg(BLUE.c800));
         frame.render_stateful_widget(table, chunks[0], &mut self.table_state);
     }
 
@@ -335,7 +326,7 @@ impl Tui {
         let num_lines = num_lines as usize;
         let i = match self.table_state.selected() {
             Some(i) => {
-                if i < self.entries.len() - num_lines {
+                if i < self.entries.len().saturating_sub(num_lines) {
                     i + num_lines
                 } else {
                     self.entries.len() - 1
@@ -387,12 +378,10 @@ impl Tui {
         if self.mode == RecordType::Clipboard {
             if let Some(selected) = self.table_state.selected() {
                 match handle_remove(self.entries[selected].id) {
-                    Err(error) => return Err(AppError::from(error)),
-                    Ok(Some(warning)) => {
-                        self.warnings = vec![AppWarning::from(warning)];
-                        self.warning_timer = Some(Instant::now());
+                    Err(error) => return Err(error),
+                    Ok(warnings) => {
+                        self.warnings.extend(warnings);
                     }
-                    _ => {}
                 }
             }
         }
@@ -400,8 +389,7 @@ impl Tui {
     }
 
     fn paste(&mut self) -> Result<(), AppError> {
-        let destination_path =
-            env::current_dir().map_err(|error| FileError::Cwd { source: error })?;
+        let destination_path = current_dir().map_err(|error| FileError::Cwd { source: error })?;
         let mut marked_entries: Vec<RecordEntry> = self
             .entries
             .clone()
@@ -428,12 +416,9 @@ impl Tui {
         };
         match handle_paste(destination_path, Some(paste_content)) {
             Err(error) => return Err(error),
-            Ok((paste_infos, paste_warnings)) => {
-                self.infos.extend(paste_infos);
-                if let Some(warnings) = paste_warnings {
-                    self.warnings = warnings;
-                    self.warning_timer = Some(Instant::now());
-                }
+            Ok((infos, warnings)) => {
+                self.infos.extend(infos);
+                self.warnings.extend(warnings);
             }
         }
         self.exit();
@@ -442,5 +427,116 @@ impl Tui {
 
     fn exit(&mut self) {
         self.should_exit = true;
+    }
+
+    fn clean_up(&mut self, start_y: u16) -> Result<(), TuiError> {
+        execute!(
+            stdout(),
+            MoveTo(0, start_y),
+            Clear(ClearType::FromCursorDown),
+            Show
+        )
+        .map_err(|error| TuiError::TerminalCommand { source: error })?;
+        ratatui::restore();
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_helpers::create_test_tui;
+
+    #[test]
+    fn test_tui_navigation_next() {
+        let mut tui = create_test_tui(10);
+        assert_eq!(tui.table_state.selected(), Some(0));
+
+        tui.next(1);
+        assert_eq!(tui.table_state.selected(), Some(1));
+
+        tui.next(5);
+        assert_eq!(tui.table_state.selected(), Some(6));
+
+        tui.next(10);
+        assert_eq!(tui.table_state.selected(), Some(9));
+    }
+
+    #[test]
+    fn test_tui_navigation_previous() {
+        let mut tui = create_test_tui(10);
+        tui.table_state.select(Some(9)); // Start at the bottom
+
+        tui.previous(1);
+        assert_eq!(tui.table_state.selected(), Some(8));
+
+        tui.previous(5);
+        assert_eq!(tui.table_state.selected(), Some(3));
+
+        tui.previous(10);
+        assert_eq!(tui.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_tui_navigation_top_and_bottom() {
+        let mut tui = create_test_tui(20);
+        assert_eq!(tui.table_state.selected(), Some(0));
+
+        tui.bottom();
+        assert_eq!(tui.table_state.selected(), Some(19));
+
+        tui.top();
+        assert_eq!(tui.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_tui_mark() {
+        let mut tui = create_test_tui(5);
+        tui.table_state.select(Some(2));
+
+        assert!(!tui.marked[2]);
+        tui.mark();
+        assert!(tui.marked[2]);
+        tui.mark();
+        assert!(!tui.marked[2]);
+    }
+
+    #[test]
+    fn test_tui_mark_invalid_entry() {
+        let mut tui = create_test_tui(5);
+        tui.table_state.select(Some(2));
+        tui.invalid[2] = true;
+
+        assert!(!tui.marked[2]);
+        tui.mark();
+        assert!(!tui.marked[2]);
+    }
+
+    #[test]
+    fn test_tui_mark_all() {
+        let mut tui = create_test_tui(5);
+
+        tui.mark_all();
+        assert!(tui.marked.iter().all(|&m| m));
+
+        tui.mark_all();
+        assert!(tui.marked.iter().all(|&m| !m));
+    }
+
+    #[test]
+    fn test_tui_mark_all_some_marked() {
+        let mut tui = create_test_tui(5);
+        tui.marked[0] = true;
+        tui.marked[2] = true;
+
+        tui.mark_all();
+        assert!(tui.marked.iter().all(|&m| m));
+    }
+
+    #[test]
+    fn test_tui_exit() {
+        let mut tui = create_test_tui(5);
+        assert!(!tui.should_exit);
+        tui.exit();
+        assert!(tui.should_exit);
     }
 }
