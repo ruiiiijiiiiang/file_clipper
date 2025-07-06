@@ -3,7 +3,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{
-        palette::tailwind::{BLUE, EMERALD, GRAY},
+        palette::tailwind::{BLUE, NEUTRAL, TEAL},
         Modifier, Style, Stylize,
     },
     text::Line,
@@ -83,16 +83,16 @@ impl Tui {
                     .draw(|frame| {
                         self.render_ui(frame, frame.area());
                     })
-                    .map_err(|error| TuiError::TerminalDraw { source: error })?;
+                    .map_err(|source| TuiError::TerminalDraw { source })?;
 
                 if event::poll(Duration::from_millis(POLL_INTERVAL))
-                    .map_err(|error| TuiError::EventPolling { source: error })?
+                    .map_err(|source| TuiError::EventPolling { source })?
                 {
-                    match event::read().map_err(|error| TuiError::EventRead { source: error })? {
+                    match event::read().map_err(|source| TuiError::EventRead { source })? {
                         Event::Key(key) => self.handle_keypress(key)?,
                         Event::Resize(_, _) => terminal
                             .autoresize()
-                            .map_err(|error| TuiError::TerminalAutoresize { source: error })?,
+                            .map_err(|source| TuiError::TerminalAutoresize { source })?,
                         _ => {}
                     };
                 }
@@ -150,7 +150,12 @@ impl Tui {
             .iter()
             .map(|(header, _, _)| Cell::from(*header))
             .collect::<Row>()
-            .style(Style::default().add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .bg(NEUTRAL.c700)
+                    .fg(NEUTRAL.c300)
+                    .add_modifier(Modifier::BOLD),
+            )
             .height(1);
 
         let constraints: Vec<Constraint> = column_definitions
@@ -163,9 +168,9 @@ impl Tui {
             self.invalid[index] = !valid;
 
             let style = if !valid {
-                Style::default().fg(GRAY.c500).crossed_out()
+                Style::default().fg(NEUTRAL.c500).crossed_out()
             } else if self.marked[index] {
-                Style::default().fg(EMERALD.c300)
+                Style::default().fg(TEAL.c300)
             } else {
                 Style::default()
             };
@@ -179,8 +184,8 @@ impl Tui {
         let table = Table::new(rows, constraints)
             .block(
                 Block::default()
-                    .title(format!("File Clipper - {}", self.mode))
                     .borders(Borders::ALL)
+                    .title_top(format!("File Clipper - {}", self.mode))
                     .title_bottom(
                         Line::from("Navigation: j/k; Select: space; Paste: p; Quit: q").centered(),
                     ),
@@ -381,7 +386,7 @@ impl Tui {
     }
 
     fn paste(&mut self) -> Result<(), AppError> {
-        let destination_path = current_dir().map_err(|error| FileError::Cwd { source: error })?;
+        let destination_path = current_dir().map_err(|source| FileError::Cwd { source })?;
         let mut marked_entries: Vec<RecordEntry> = self
             .entries
             .clone()

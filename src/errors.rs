@@ -3,8 +3,6 @@ use glob::{GlobError, PatternError};
 use std::{io::Error as IoError, path::PathBuf};
 use thiserror::Error;
 
-use crate::models::Operation;
-
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error(transparent)]
@@ -240,8 +238,14 @@ pub enum RecordWarning {
 
 #[derive(Debug, Error)]
 pub enum AppInfo {
-    #[error("{operation} {path}")]
-    Transfer { operation: Operation, path: PathBuf },
+    #[error("Copied {path}")]
+    Copy { path: PathBuf },
+
+    #[error("Cut {path}")]
+    Cut { path: PathBuf },
+
+    #[error("Linked {path}")]
+    Link { path: PathBuf },
 
     #[error("Pasted {path}")]
     Paste { path: PathBuf },

@@ -27,70 +27,12 @@ pub fn read_history() -> Result<Option<Vec<RecordEntry>>, RecordError> {
     read_records(RecordType::History)
 }
 
-fn read_records(record_type: RecordType) -> Result<Option<Vec<RecordEntry>>, RecordError> {
-    let (path, mutex) = match record_type {
-        RecordType::Clipboard => (get_storage_path(RecordType::Clipboard)?, &CLIPBOARD_MUTEX),
-        RecordType::History => (get_storage_path(RecordType::History)?, &HISTORY_MUTEX),
-    };
-    read_toml_file(&path, mutex).map(|data| data.map(|d| d.entries))
-}
-
 pub fn write_clipboard(entries: &[RecordEntry]) -> Result<(), RecordError> {
     write_records(entries, RecordType::Clipboard)
 }
 
 pub fn write_history(entries: &[RecordEntry]) -> Result<(), RecordError> {
     write_records(entries, RecordType::History)
-}
-
-fn write_records(entries: &[RecordEntry], record_type: RecordType) -> Result<(), RecordError> {
-    let (path, mutex) = match record_type {
-        RecordType::Clipboard => (get_storage_path(RecordType::Clipboard)?, &CLIPBOARD_MUTEX),
-        RecordType::History => (get_storage_path(RecordType::History)?, &HISTORY_MUTEX),
-    };
-    let capped_entries = if entries.len() > MAX_CLIPBOARD_ENTRIES {
-        &entries[..MAX_CLIPBOARD_ENTRIES]
-    } else {
-        entries
-    };
-    let record_data = RecordData {
-        entries: capped_entries.to_vec(),
-    };
-    write_toml_file(&path, mutex, record_data)
-}
-
-fn read_toml_file<P: AsRef<Path>>(
-    path: P,
-    mutex: &Mutex<()>,
-) -> Result<Option<RecordData>, RecordError> {
-    let _lock = mutex.lock().unwrap();
-    let path = path.as_ref();
-
-    let mut file = match File::open(path) {
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(RecordError::OpenRecordFile {
-                path: path.into(),
-                source: error,
-            })
-        }
-        Ok(file) => file,
-    };
-
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .map_err(|error| RecordError::ReadRecordFile {
-            path: path.into(),
-            source: error,
-        })?;
-
-    match toml_from_str(&contents) {
-        Err(error) => Err(RecordError::DeserializeRecordFile {
-            path: path.into(),
-            source: error,
-        }),
-        Ok(parsed) => Ok(Some(parsed)),
-    }
 }
 
 pub fn handle_remove(id: Uuid) -> Result<Vec<AppWarning>, AppError> {
@@ -119,18 +61,85 @@ pub fn handle_remove(id: Uuid) -> Result<Vec<AppWarning>, AppError> {
 pub fn clear_records() -> Result<Vec<AppInfo>, AppError> {
     let mut infos = Vec::new();
     let record_path = get_storage_path(RecordType::Clipboard)?;
-    remove_file(&record_path).map_err(|error| RecordError::ClearRecords {
+    remove_file(&record_path).map_err(|source| RecordError::ClearRecords {
         path: record_path.clone(),
-        source: error,
+        source,
     })?;
     infos.push(AppInfo::Clear { path: record_path });
     let history_path = get_storage_path(RecordType::History)?;
-    remove_file(&history_path).map_err(|error| RecordError::ClearRecords {
+    remove_file(&history_path).map_err(|source| RecordError::ClearRecords {
         path: history_path.clone(),
-        source: error,
+        source,
     })?;
     infos.push(AppInfo::Clear { path: history_path });
     Ok(infos)
+}
+
+fn get_storage_path(record_type: RecordType) -> Result<PathBuf, RecordError> {
+    let path = home_dir().ok_or(RecordError::GetHomeDir)?.join(STORAGE_DIR);
+    create_dir_all(&path).map_err(|source| RecordError::CreateConfigDir {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(path.join(format!("{}.toml", record_type)))
+}
+
+fn read_records(record_type: RecordType) -> Result<Option<Vec<RecordEntry>>, RecordError> {
+    let (path, mutex) = match record_type {
+        RecordType::Clipboard => (get_storage_path(RecordType::Clipboard)?, &CLIPBOARD_MUTEX),
+        RecordType::History => (get_storage_path(RecordType::History)?, &HISTORY_MUTEX),
+    };
+    read_toml_file(&path, mutex).map(|data| data.map(|d| d.entries))
+}
+
+fn write_records(entries: &[RecordEntry], record_type: RecordType) -> Result<(), RecordError> {
+    let (path, mutex) = match record_type {
+        RecordType::Clipboard => (get_storage_path(RecordType::Clipboard)?, &CLIPBOARD_MUTEX),
+        RecordType::History => (get_storage_path(RecordType::History)?, &HISTORY_MUTEX),
+    };
+    let capped_entries = if entries.len() > MAX_CLIPBOARD_ENTRIES {
+        &entries[..MAX_CLIPBOARD_ENTRIES]
+    } else {
+        entries
+    };
+    let record_data = RecordData {
+        entries: capped_entries.to_vec(),
+    };
+    write_toml_file(&path, mutex, record_data)
+}
+
+fn read_toml_file<P: AsRef<Path>>(
+    path: P,
+    mutex: &Mutex<()>,
+) -> Result<Option<RecordData>, RecordError> {
+    let path = path.as_ref();
+    let _lock = mutex.lock().unwrap();
+
+    let mut file = match File::open(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(RecordError::OpenRecordFile {
+                path: path.into(),
+                source,
+            })
+        }
+        Ok(file) => file,
+    };
+
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|source| RecordError::ReadRecordFile {
+            path: path.into(),
+            source,
+        })?;
+
+    match toml_from_str(&contents) {
+        Err(source) => Err(RecordError::DeserializeRecordFile {
+            path: path.into(),
+            source,
+        }),
+        Ok(parsed) => Ok(Some(parsed)),
+    }
 }
 
 fn write_toml_file<P: AsRef<Path>>(
@@ -138,33 +147,25 @@ fn write_toml_file<P: AsRef<Path>>(
     mutex: &Mutex<()>,
     data: RecordData,
 ) -> Result<(), RecordError> {
-    let _lock = mutex.lock().unwrap();
     let path = path.as_ref();
+    let _lock = mutex.lock().unwrap();
+
     match toml_to_string(&data) {
-        Err(error) => Err(RecordError::SerializeRecordFile { source: error }),
+        Err(source) => Err(RecordError::SerializeRecordFile { source }),
         Ok(toml_string) => {
-            let mut file = File::create(path).map_err(|error| RecordError::CreateRecordFile {
+            let mut file = File::create(path).map_err(|source| RecordError::CreateRecordFile {
                 path: path.to_path_buf(),
-                source: error,
+                source,
             })?;
-            file.write_all(toml_string.as_bytes()).map_err(|error| {
+            file.write_all(toml_string.as_bytes()).map_err(|source| {
                 RecordError::WriteRecordFile {
                     path: path.to_path_buf(),
-                    source: error,
+                    source,
                 }
             })?;
             Ok(())
         }
     }
-}
-
-fn get_storage_path(record_type: RecordType) -> Result<PathBuf, RecordError> {
-    let path = home_dir().ok_or(RecordError::GetHomeDir)?.join(STORAGE_DIR);
-    create_dir_all(&path).map_err(|error| RecordError::CreateConfigDir {
-        path: path.to_path_buf(),
-        source: error,
-    })?;
-    Ok(path.join(format!("{}.toml", record_type)))
 }
 
 #[cfg(test)]

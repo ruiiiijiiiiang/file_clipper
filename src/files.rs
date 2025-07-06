@@ -45,9 +45,10 @@ pub fn handle_transfer<P: AsRef<Path>>(
     let clipboard_entries: Vec<RecordEntry> = clipboard_entries.into();
     write_clipboard(&clipboard_entries)?;
     for path in expanded_paths {
-        infos.push(AppInfo::Transfer {
-            operation: operation.clone(),
-            path,
+        infos.push(match operation {
+            Operation::Copy => AppInfo::Copy { path },
+            Operation::Cut => AppInfo::Cut { path },
+            Operation::Link => AppInfo::Link { path },
         });
     }
     Ok((infos, warnings))
@@ -64,13 +65,13 @@ pub fn handle_paste<P: AsRef<Path>>(
     let (entries_to_paste, mut clipboard_entries, mut history_entries) = match &paste_content {
         None => (
             read_clipboard()?.unwrap_or(Vec::new()),
-            None,
+            Some(read_clipboard()?.unwrap_or(Vec::new())),
             Some(VecDeque::from(read_history()?.unwrap_or(Vec::new()))),
         ),
         Some(content) => match content.source {
             RecordType::Clipboard => (
                 content.entries.clone(),
-                Some(VecDeque::from(read_clipboard()?.unwrap_or(Vec::new()))),
+                Some(read_clipboard()?.unwrap_or(Vec::new())),
                 Some(VecDeque::from(read_history()?.unwrap_or(Vec::new()))),
             ),
             RecordType::History => (content.entries.clone(), None, None),
@@ -88,17 +89,17 @@ pub fn handle_paste<P: AsRef<Path>>(
 
         let operation_result = match entry.operation {
             Operation::Copy => copy_items(&[&entry.path], &destination_path, &options)
-                .map_err(|error| FileError::Copy {
+                .map_err(|source| FileError::Copy {
                     from_path: entry.path.clone(),
                     to_path: destination_path.clone(),
-                    source: error,
+                    source,
                 })
                 .map(|_| ()),
             Operation::Cut => move_items(&[&entry.path], &destination_path, &options)
-                .map_err(|error| FileError::Move {
+                .map_err(|source| FileError::Move {
                     from_path: entry.path.clone(),
                     to_path: destination_path.clone(),
-                    source: error,
+                    source,
                 })
                 .map(|_| ()),
             Operation::Link => {
@@ -108,10 +109,10 @@ pub fn handle_paste<P: AsRef<Path>>(
                 let mut new_path = destination_path.clone();
                 new_path.push(file_name);
                 symlink(&entry.path, &new_path)
-                    .map_err(|error| FileError::Link {
+                    .map_err(|source| FileError::Link {
                         from_path: entry.path.clone(),
                         to_path: destination_path.clone(),
-                        source: error,
+                        source,
                     })
                     .map(|_| ())
             }
@@ -195,7 +196,6 @@ pub fn handle_paste<P: AsRef<Path>>(
     }
 
     if let Some(clipboard_entries) = clipboard_entries {
-        let clipboard_entries: Vec<RecordEntry> = clipboard_entries.into();
         write_clipboard(&clipboard_entries)?
     }
     if let Some(history_entries) = history_entries {
@@ -210,37 +210,38 @@ pub fn get_metadata<P: AsRef<Path>>(path: P) -> Result<Metadata, FileError> {
 
     let absolute_path = if path.is_relative() {
         current_dir()
-            .map_err(|error| FileError::Cwd { source: error })?
+            .map_err(|source| FileError::Cwd { source })?
             .join(path)
     } else {
         path.to_path_buf()
     };
 
-    let metadata = symlink_metadata(&absolute_path).map_err(|error| {
-        if error.kind() == IoErrorKind::NotFound {
+    let metadata = symlink_metadata(&absolute_path).map_err(|source| {
+        if source.kind() == IoErrorKind::NotFound {
             FileError::PathNotFound {
                 path: absolute_path.clone(),
             }
         } else {
             FileError::Metadata {
                 path: absolute_path.clone(),
-                source: error,
+                source,
             }
         }
     })?;
 
-    let canonical_path = absolute_path
-        .canonicalize()
-        .map_err(|error| FileError::AbsolutePath {
-            path: absolute_path,
-            source: error,
-        })?;
+    let canonical_path =
+        absolute_path
+            .canonicalize()
+            .map_err(|source| FileError::AbsolutePath {
+                path: absolute_path,
+                source,
+            })?;
 
     let modified = metadata
         .modified()
-        .map_err(|error| FileError::ModifiedAccess {
+        .map_err(|source| FileError::ModifiedAccess {
             path: canonical_path.clone(),
-            source: error,
+            source,
         })?;
 
     let file_type = metadata.file_type();
@@ -273,17 +274,18 @@ pub fn get_metadata<P: AsRef<Path>>(path: P) -> Result<Metadata, FileError> {
 pub fn get_absolute_path<P: AsRef<Path>>(path: P) -> Result<PathBuf, FileError> {
     let path = path.as_ref();
     let absolute_path = if path.is_relative() {
-        let cwd = current_dir().map_err(|error| FileError::Cwd { source: error })?;
+        let cwd = current_dir().map_err(|source| FileError::Cwd { source })?;
         cwd.join(path)
     } else {
         path.to_path_buf()
     };
-    let canonical_path = absolute_path
-        .canonicalize()
-        .map_err(|error| FileError::AbsolutePath {
-            path: path.to_path_buf(),
-            source: error,
-        })?;
+    let canonical_path =
+        absolute_path
+            .canonicalize()
+            .map_err(|source| FileError::AbsolutePath {
+                path: path.to_path_buf(),
+                source,
+            })?;
     Ok(canonical_path)
 }
 
@@ -301,9 +303,9 @@ fn expand_paths<P: AsRef<Path>>(
                 Ok(entries) => {
                     let mut matched_paths = entries
                         .map(|entry| {
-                            entry.map_err(|error| FileError::GlobUnreadable {
+                            entry.map_err(|source| FileError::GlobUnreadable {
                                 path: path.as_ref().to_path_buf(),
-                                source: error,
+                                source,
                             })
                         })
                         .collect::<Result<Vec<PathBuf>, FileError>>()?;
@@ -320,10 +322,10 @@ fn expand_paths<P: AsRef<Path>>(
                         expanded.extend(matched_paths);
                     }
                 }
-                Err(error) => {
+                Err(source) => {
                     return Err(FileError::GlobInvalidPattern {
                         path: path.as_ref().to_path_buf(),
-                        source: error,
+                        source,
                     });
                 }
             }

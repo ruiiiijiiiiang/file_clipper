@@ -65,7 +65,7 @@ pub fn create_mock_record_entry(
     let operation = operation.unwrap_or(Operation::Copy);
     let entry_type = entry_type.unwrap_or(EntryType::File);
     let path = path.unwrap_or_else(|| PathBuf::from(format!("/tmp/file_{}.txt", Uuid::new_v4())));
-    let size = size.or(Some(123)); // Default size if not provided
+    let size = size.or(Some(123));
 
     RecordEntry {
         id,
