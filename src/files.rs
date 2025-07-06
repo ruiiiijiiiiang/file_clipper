@@ -739,4 +739,31 @@ mod tests {
             other_error => panic!("Expected PathNotFound error, got {:?}", other_error),
         }
     }
+
+    #[test]
+    #[serial]
+    fn test_handle_paste_duplicate_entries() {
+        let env = setup_test_env();
+        let file_path = env.source_dir.join("duplicate.txt");
+        create_test_file(&file_path, "content");
+
+        let entry1 = get_test_entry(&file_path, Operation::Copy);
+        let entry2 = get_test_entry(&file_path, Operation::Copy);
+
+        write_clipboard(&[entry1, entry2]).unwrap();
+
+        let (infos, warnings) = handle_paste(&env.dest_dir, None).unwrap();
+
+        assert_eq!(infos.len(), 1);
+        assert_eq!(warnings.len(), 1);
+
+        assert!(matches!(infos[0], AppInfo::Paste { .. }));
+        assert!(matches!(
+            warnings[0],
+            AppWarning::File(FileWarning::AlreadyExists { .. })
+        ));
+        assert!(env.dest_dir.join("duplicate.txt").exists());
+        let clipboard = read_clipboard().unwrap().unwrap();
+        assert_eq!(clipboard.len(), 1);
+    }
 }

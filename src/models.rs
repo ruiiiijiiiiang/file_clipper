@@ -70,4 +70,3 @@ pub struct PasteContent {
     pub entries: Vec<RecordEntry>,
     pub source: RecordType,
 }
-

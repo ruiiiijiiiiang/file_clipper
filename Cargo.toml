@@ -2,7 +2,17 @@
 name = "file_clipper"
 version = "0.1.0"
 edition = "2021"
+authors = ["Rui Jiang me@ruijiang.me"]
 license = "MIT"
+description = "A command-line utility that provides intuitive and efficient file management capabilities, mimicking the familiar “copy,” “cut,” and “paste” operations found in graphical user interfaces."
+readme = "README.md"
+repository = "https://github.com/ruiiiijiiiiang/file_clipper"
+keywords = ["cli", "file-management", "copy", "paste", "tui"]
+categories = ["command-line-utilities", "filesystem"]
+
+[[bin]]
+name = "clp"
+path = "src/main.rs"
 
 [dependencies]
 ratatui = "0.29.0"
