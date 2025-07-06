@@ -17,9 +17,7 @@ pub enum AppError {
 
 #[derive(Debug, Error)]
 pub enum RecordError {
-    #[error(
-        "Could not get the user's home directory. Please check your permissions and try again."
-    )]
+    #[error("Could not get the user's home directory. Please check your permissions.")]
     GetHomeDir,
 
     #[error("Could not create configuration directory at '{path}'. Please check permissions or create it manually.")]
@@ -29,50 +27,48 @@ pub enum RecordError {
         source: IoError,
     },
 
-    #[error("Could not create record file at '{path}'. Please check for sufficient permissions and available disk space.")]
+    #[error("Could not create record file at '{path}'. Please check permissions and available disk space.")]
     CreateRecordFile {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Could not open record file at '{path}'. Please ensure the file exists and that you have permission to read it.")]
+    #[error("Could not open record file at '{path}'. Please ensure the file exists and you have permission to read it.")]
     OpenRecordFile {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Could not read from record file at '{path}'. The file may be corrupted or you may not have permission to read it.")]
+    #[error("Could not read from record file at '{path}'. The file may be corrupted. Try running `clp clear` to reset it.")]
     ReadRecordFile {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Could not parse data from record file at '{path}'. The file may be corrupted or have an invalid format.")]
+    #[error("Could not parse data from record file at '{path}'. The file may be corrupted or have an invalid format. Try running `clp clear` to reset it.")]
     DeserializeRecordFile {
         path: PathBuf,
         #[source]
         source: toml::de::Error,
     },
 
-    #[error("Could not prepare data for saving to the record file due to an internal error.")]
+    #[error("Could not prepare data for saving to the record file.")]
     SerializeRecordFile {
         #[source]
         source: toml::ser::Error,
     },
 
-    #[error("Could not write to record file at '{path}'. Please check for sufficient permissions and available disk space.")]
+    #[error("Could not write to record file at '{path}'. Please check permissions and available disk space.")]
     WriteRecordFile {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error(
-        "Could not delete record file at '{path}'. Please check permissions or try again later."
-    )]
+    #[error("Could not delete record file at '{path}'. Please check permissions.")]
     ClearRecords {
         path: PathBuf,
         #[source]
@@ -82,19 +78,17 @@ pub enum RecordError {
 
 #[derive(Debug, Error)]
 pub enum FileError {
-    #[error(
-        "The specified path '{path}' was not found. Please ensure it exists and is accessible."
-    )]
+    #[error("The specified path '{path}' was not found. Please ensure it exists and is accessible.")]
     PathNotFound { path: PathBuf },
 
-    #[error("Could not determine the full path for '{path}'. Check if the path is valid or if there are permission issues.")]
+    #[error("Could not determine the full path for '{path}'. Please check if the path is valid or if there are permission issues.")]
     AbsolutePath {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Could not determine the current working directory. This could be a permission issue or a problem with the file system.")]
+    #[error("Could not determine the current working directory. This may be a permission issue or a problem with the file system.")]
     Cwd {
         #[source]
         source: IoError,
@@ -117,10 +111,10 @@ pub enum FileError {
         source: IoError,
     },
 
-    #[error("The file type for '{path}' is not supported. This application expects a different kind of file or directory.")]
+    #[error("The file type for '{path}' is not supported.")]
     UnsupportedType { path: PathBuf },
 
-    #[error("Could not copy '{from_path}' to '{to_path}'. Please check that the destination exists and that you have sufficient permissions.")]
+    #[error("Could not copy '{from_path}' to '{to_path}'. Please check that the destination exists and you have sufficient permissions.")]
     Copy {
         from_path: PathBuf,
         to_path: PathBuf,
@@ -128,7 +122,7 @@ pub enum FileError {
         source: FsError,
     },
 
-    #[error("Could not move '{from_path}' to '{to_path}'. Please check that the destination exists and that you have sufficient permissions.")]
+    #[error("Could not move '{from_path}' to '{to_path}'. Please check that the destination exists and you have sufficient permissions.")]
     Move {
         from_path: PathBuf,
         to_path: PathBuf,
@@ -136,7 +130,7 @@ pub enum FileError {
         source: FsError,
     },
 
-    #[error("Could not create a symlink to '{from_path}' at '{to_path}'. Please check that the destination exists and that you have sufficient permissions.")]
+    #[error("Could not create a symlink from '{from_path}' to '{to_path}'. Please check that the destination exists and you have sufficient permissions.")]
     Link {
         from_path: PathBuf,
         to_path: PathBuf,
@@ -160,29 +154,25 @@ pub enum FileError {
 }
 #[derive(Debug, Error)]
 pub enum TuiError {
-    #[error("A terminal error occurred while drawing the interface. Please try running the command again.")]
+    #[error("A terminal error occurred while drawing the interface.")]
     TerminalDraw {
         #[source]
         source: IoError,
     },
 
-    #[error(
-        "A terminal error occurred while waiting for input. Please try running the command again."
-    )]
+    #[error("A terminal error occurred while waiting for input.")]
     EventPolling {
         #[source]
         source: IoError,
     },
 
-    #[error(
-        "A terminal error occurred while reading input. Please try running the command again."
-    )]
+    #[error("A terminal error occurred while reading input.")]
     EventRead {
         #[source]
         source: IoError,
     },
 
-    #[error("A terminal error occurred while resizing the interface. Please try running the command again.")]
+    #[error("A terminal error occurred while resizing the interface.")]
     TerminalAutoresize {
         #[source]
         source: IoError,
@@ -229,7 +219,7 @@ pub enum FileWarning {
 
 #[derive(Debug, Error)]
 pub enum RecordWarning {
-    #[error("Could not read data from the clipboard file. It may be corrupted or inaccessible.")]
+    #[error("Could not read data from the clipboard file. It may be corrupted. Try running `clp clear` to reset it.")]
     ClipboardUnreadable,
 
     #[error("Specified entry was not found in the clipboard.")]
