@@ -80,9 +80,19 @@ When the TUI is launched (e.g., with `clp list` or `clp history`):
 - **Navigation:** Use `j` or `k` (or arrow keys) to move up and down. Use `Ctrl+d` and `Ctrl+u` to scroll half a page, and `Ctrl+f` and `Ctrl+b` to scroll a full page. Press `g` to go to the top and `G` to go to the bottom.
 - **Selection:** Press `space` to select/unselect individual entries. Press `a` to select/unselect all entries.
 - **Actions:**
-  - `p` or `Enter`: Paste the selected files (only available in clipboard mode).
+  - `p` or `Enter`: Paste the selected files
   - `x` or `d`: Remove the selected entry from the clipboard (only available in clipboard mode).
   - `q` or `Ctrl+c`: Exit the TUI.
+
+## Uninstalling
+
+`file_clipper` stores record files at `$HOME/.local/state/file_clipper`. You should run `clp clear` prior to uninstalling to remove these files.
+
+After clearing the records, you can uninstall the application using Cargo:
+
+```bash
+cargo uninstall file_clipper
+```
 
 ## Contributing
 

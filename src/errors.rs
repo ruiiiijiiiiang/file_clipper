@@ -68,7 +68,7 @@ pub enum RecordError {
         source: IoError,
     },
 
-    #[error("Could not delete record file at '{path}'. Please check permissions.")]
+    #[error("Could not delete record at '{path}'. Please check permissions.")]
     ClearRecords {
         path: PathBuf,
         #[source]

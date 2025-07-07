@@ -74,18 +74,15 @@ pub fn clear_records() -> Result<Vec<AppInfo>, AppError> {
         source,
     })?;
     infos.push(AppInfo::Clear { path: record_path });
-    let history_path = get_storage_path(RecordType::History)?;
-    remove_file(&history_path).map_err(|source| RecordError::ClearRecords {
-        path: history_path.clone(),
-        source,
-    })?;
-    infos.push(AppInfo::Clear { path: history_path });
-    let dir_path = home_dir().ok_or(RecordError::GetHomeDir)?.join(STORAGE_DIR);
-    remove_dir(&dir_path).map_err(|source| RecordError::ClearRecords {
-        path: dir_path.clone(),
-        source,
-    })?;
-    infos.push(AppInfo::Clear { path: dir_path });
+
+    for record_type in [RecordType::Clipboard, RecordType::History] {
+        let record_path = get_storage_path(record_type)?;
+        remove_file(&record_path).map_err(|source| RecordError::ClearRecords {
+            path: record_path.clone(),
+            source,
+        })?;
+        infos.push(AppInfo::Clear { path: record_path });
+    }
     Ok(infos)
 }
 
