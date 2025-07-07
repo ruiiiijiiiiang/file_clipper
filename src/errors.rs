@@ -78,7 +78,9 @@ pub enum RecordError {
 
 #[derive(Debug, Error)]
 pub enum FileError {
-    #[error("The specified path '{path}' was not found. Please ensure it exists and is accessible.")]
+    #[error(
+        "The specified path '{path}' was not found. Please ensure it exists and is accessible."
+    )]
     PathNotFound { path: PathBuf },
 
     #[error("Could not determine the full path for '{path}'. Please check if the path is valid or if there are permission issues.")]
@@ -240,6 +242,6 @@ pub enum AppInfo {
     #[error("Pasted {path}")]
     Paste { path: PathBuf },
 
-    #[error("Deleted records from {path}")]
+    #[error("Deleted {path}")]
     Clear { path: PathBuf },
 }

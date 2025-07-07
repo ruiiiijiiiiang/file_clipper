@@ -1,6 +1,6 @@
 use std::{
     env::home_dir,
-    fs::{create_dir_all, remove_file, File},
+    fs::{create_dir_all, remove_dir, remove_file, File},
     io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     sync::Mutex,
@@ -18,6 +18,14 @@ static HISTORY_MUTEX: Mutex<()> = Mutex::new(());
 
 const MAX_CLIPBOARD_ENTRIES: usize = 200;
 const STORAGE_DIR: &str = ".local/state/file_clipper";
+
+pub fn read_entries(mode: RecordType) -> Result<Vec<RecordEntry>, AppError> {
+    let entries = match mode {
+        RecordType::Clipboard => read_clipboard()?.unwrap_or(vec![]),
+        RecordType::History => read_history()?.unwrap_or(vec![]),
+    };
+    Ok(entries)
+}
 
 pub fn read_clipboard() -> Result<Option<Vec<RecordEntry>>, RecordError> {
     read_records(RecordType::Clipboard)
@@ -72,6 +80,12 @@ pub fn clear_records() -> Result<Vec<AppInfo>, AppError> {
         source,
     })?;
     infos.push(AppInfo::Clear { path: history_path });
+    let dir_path = home_dir().ok_or(RecordError::GetHomeDir)?.join(STORAGE_DIR);
+    remove_dir(&dir_path).map_err(|source| RecordError::ClearRecords {
+        path: dir_path.clone(),
+        source,
+    })?;
+    infos.push(AppInfo::Clear { path: dir_path });
     Ok(infos)
 }
 

@@ -19,7 +19,7 @@ use crate::{
     errors::{AppError, AppInfo, AppWarning, FileError, TuiError},
     files::{get_metadata, handle_paste},
     models::{PasteContent, RecordEntry, RecordType},
-    records::{handle_remove, read_clipboard, read_history},
+    records::{handle_remove, read_entries},
 };
 
 const HEIGHT: u16 = 20;
@@ -27,6 +27,8 @@ const OPERATION_WIDTH: u16 = 10;
 const SELECTED_WIDTH: u16 = 8;
 const TIMESTAMP_WIDTH: u16 = 30;
 const POLL_INTERVAL: u64 = 100;
+const CLIPBOARD_HELPER_TEXT: &str = "Navigation: j/k; Select: space; Paste: p; Remove: x; Quit: q";
+const HISTORY_HELPER_TEXT: &str = "Navigation: j/k; Select: space; Paste: p; Quit: q";
 
 pub struct Tui {
     pub entries: Vec<RecordEntry>,
@@ -48,10 +50,7 @@ type ColumnDef<'a> = (
 
 impl Tui {
     pub fn new(mode: RecordType) -> Result<Self, AppError> {
-        let entries = match mode {
-            RecordType::Clipboard => read_clipboard()?.unwrap_or(vec![]),
-            RecordType::History => read_history()?.unwrap_or(vec![]),
-        };
+        let entries = read_entries(mode.clone())?;
         if entries.is_empty() {
             println!("[Info]: {} is empty", mode);
         }
@@ -187,7 +186,12 @@ impl Tui {
                     .borders(Borders::ALL)
                     .title_top(format!("File Clipper - {}", self.mode))
                     .title_bottom(
-                        Line::from("Navigation: j/k; Select: space; Paste: p; Quit: q").centered(),
+                        Line::from(if self.mode == RecordType::Clipboard {
+                            CLIPBOARD_HELPER_TEXT
+                        } else {
+                            HISTORY_HELPER_TEXT
+                        })
+                        .centered(),
                     ),
             )
             .header(header)
@@ -381,6 +385,7 @@ impl Tui {
                     }
                 }
             }
+            self.entries = read_entries(self.mode.clone())?;
         }
         Ok(())
     }
