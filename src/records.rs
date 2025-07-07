@@ -68,20 +68,32 @@ pub fn handle_remove(id: Uuid) -> Result<Vec<AppWarning>, AppError> {
 
 pub fn clear_records() -> Result<Vec<AppInfo>, AppError> {
     let mut infos = Vec::new();
-    let record_path = get_storage_path(RecordType::Clipboard)?;
-    remove_file(&record_path).map_err(|source| RecordError::ClearRecords {
-        path: record_path.clone(),
-        source,
-    })?;
-    infos.push(AppInfo::Clear { path: record_path });
-
     for record_type in [RecordType::Clipboard, RecordType::History] {
         let record_path = get_storage_path(record_type)?;
-        remove_file(&record_path).map_err(|source| RecordError::ClearRecords {
-            path: record_path.clone(),
-            source,
-        })?;
-        infos.push(AppInfo::Clear { path: record_path });
+        match remove_file(&record_path) {
+            Err(source) if source.kind() != ErrorKind::NotFound => {
+                return Err(AppError::Record(RecordError::ClearRecords {
+                    path: record_path.clone(),
+                    source,
+                }))
+            }
+            _ => {
+                infos.push(AppInfo::Clear { path: record_path });
+            }
+        };
+    }
+
+    let dir_path = home_dir().ok_or(RecordError::GetHomeDir)?.join(STORAGE_DIR);
+    match remove_dir(&dir_path) {
+        Err(source) if source.kind() != ErrorKind::NotFound => {
+            return Err(AppError::Record(RecordError::ClearRecords {
+                path: dir_path.clone(),
+                source,
+            }))
+        }
+        _ => {
+            infos.push(AppInfo::Clear { path: dir_path });
+        }
     }
     Ok(infos)
 }
@@ -336,40 +348,21 @@ mod tests {
 
         let clipboard_path = get_storage_path(RecordType::Clipboard).unwrap();
         let history_path = get_storage_path(RecordType::History).unwrap();
+        let dir_path = _env.home_dir.path().join(STORAGE_DIR);
 
         assert!(clipboard_path.exists());
         assert!(history_path.exists());
+        assert!(dir_path.exists());
 
         let result = clear_records().unwrap();
 
-        assert_eq!(result.len(), 2);
+        assert_eq!(result.len(), 3);
         assert!(matches!(&result[0], AppInfo::Clear { path: p } if p == &clipboard_path));
         assert!(matches!(&result[1], AppInfo::Clear { path: p } if p == &history_path));
+        assert!(matches!(&result[2], AppInfo::Clear { path: p } if p == &dir_path));
 
         assert!(!clipboard_path.exists());
         assert!(!history_path.exists());
-    }
-
-    #[test]
-    #[serial]
-    fn test_clear_records_files_not_found() {
-        let _env = setup_test_env();
-
-        let clipboard_path = get_storage_path(RecordType::Clipboard).unwrap();
-        let history_path = get_storage_path(RecordType::History).unwrap();
-
-        assert!(!clipboard_path.exists());
-        assert!(!history_path.exists());
-
-        let result = clear_records();
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AppError::Record(RecordError::ClearRecords { path, source }) => {
-                assert_eq!(path, clipboard_path);
-                assert_eq!(source.kind(), ErrorKind::NotFound);
-            }
-            other => panic!("Expected ClearRecords error, but got {:?}", other),
-        }
+        assert!(!dir_path.exists());
     }
 }

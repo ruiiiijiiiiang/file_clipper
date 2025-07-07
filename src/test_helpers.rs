@@ -18,7 +18,7 @@ use crate::{
 pub struct TestEnv {
     pub source_dir: PathBuf,
     pub dest_dir: PathBuf,
-    _home_dir: TempDir,
+    pub home_dir: TempDir,
 }
 
 pub fn setup_test_env() -> TestEnv {
@@ -30,7 +30,7 @@ pub fn setup_test_env() -> TestEnv {
     set_var("HOME", home_dir.path());
 
     TestEnv {
-        _home_dir: home_dir,
+        home_dir,
         source_dir,
         dest_dir,
     }
