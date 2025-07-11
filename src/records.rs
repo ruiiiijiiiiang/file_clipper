@@ -19,7 +19,7 @@ static HISTORY_MUTEX: Mutex<()> = Mutex::new(());
 const MAX_CLIPBOARD_ENTRIES: usize = 200;
 const STORAGE_DIR: &str = ".local/state/file_clipper";
 
-pub fn read_entries(mode: RecordType) -> Result<Vec<RecordEntry>, AppError> {
+pub fn read_entries(mode: &RecordType) -> Result<Vec<RecordEntry>, AppError> {
     let entries = match mode {
         RecordType::Clipboard => read_clipboard()?.unwrap_or(vec![]),
         RecordType::History => read_history()?.unwrap_or(vec![]),

@@ -50,7 +50,7 @@ type ColumnDef<'a> = (
 
 impl Tui {
     pub fn new(mode: RecordType) -> Result<Self, AppError> {
-        let entries = read_entries(mode.clone())?;
+        let entries = read_entries(&mode)?;
         if entries.is_empty() {
             println!("[Info]: {} is empty", mode);
         }
@@ -385,7 +385,7 @@ impl Tui {
                     }
                 }
             }
-            self.entries = read_entries(self.mode.clone())?;
+            self.entries = read_entries(&self.mode)?;
         }
         Ok(())
     }

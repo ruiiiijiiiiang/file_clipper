@@ -2,6 +2,8 @@
 
 `file_clipper` is a command-line utility written in Rust that provides intuitive and efficient file management capabilities, mimicking the familiar "copy," "cut," and "paste" operations found in graphical user interfaces. It also includes features for managing a clipboard and viewing operation history, with an interactive terminal user interface (TUI) for enhanced usability.
 
+![](./demo.gif)
+
 ## Features
 
 - **Copy Files:** Copy one or more files to a temporary clipboard.
@@ -74,6 +76,8 @@ clp clear
 ```
 
 ### TUI Interaction
+
+![](tui.png)
 
 When the TUI is launched (e.g., with `clp list` or `clp history`):
 
