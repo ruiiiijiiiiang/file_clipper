@@ -154,6 +154,7 @@ pub enum FileError {
         source: PatternError,
     },
 }
+
 #[derive(Debug, Error)]
 pub enum TuiError {
     #[error("A terminal error occurred while drawing the interface.")]
@@ -211,12 +212,6 @@ pub enum FileWarning {
 
     #[error("Glob pattern '{path}' did not match any file.")]
     GlobUnmatched { path: PathBuf },
-
-    #[error("File '{path}' already exists at the destination.")]
-    AlreadyExists { path: PathBuf },
-
-    #[error("Permission denied for source '{path}' or destination '{destination}'.")]
-    NoPermission { path: PathBuf, destination: PathBuf },
 }
 
 #[derive(Debug, Error)]

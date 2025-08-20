@@ -70,3 +70,25 @@ pub struct PasteContent {
     pub entries: Vec<RecordEntry>,
     pub source: RecordType,
 }
+
+#[derive(Debug, Clone)]
+pub enum OverwriteChoice {
+    Yes,
+    No,
+    OverwriteAll,
+    SkipAll,
+    Quit,
+}
+
+impl OverwriteChoice {
+    pub fn from_str(input: &str) -> Option<OverwriteChoice> {
+        match input {
+            "y" => Some(OverwriteChoice::Yes),
+            "n" => Some(OverwriteChoice::No),
+            "a" => Some(OverwriteChoice::OverwriteAll),
+            "s" => Some(OverwriteChoice::SkipAll),
+            "q" => Some(OverwriteChoice::Quit),
+            _ => None,
+        }
+    }
+}

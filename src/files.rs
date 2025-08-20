@@ -1,9 +1,9 @@
-use fs_extra::{copy_items, dir::CopyOptions, error::ErrorKind as FsErrorKind, move_items};
+use fs_extra::{copy_items, dir::CopyOptions, move_items, remove_items};
 use glob::glob;
 use std::{
     collections::VecDeque,
     env::current_dir,
-    fs::{metadata, symlink_metadata},
+    fs::symlink_metadata,
     io::ErrorKind as IoErrorKind,
     os::unix::fs::symlink,
     path::{Path, PathBuf},
@@ -14,7 +14,9 @@ use uuid::Uuid;
 
 use crate::{
     errors::{AppError, AppInfo, AppWarning, FileError, FileWarning},
-    models::{EntryType, Metadata, Operation, PasteContent, RecordEntry, RecordType},
+    models::{
+        EntryType, Metadata, Operation, OverwriteChoice, PasteContent, RecordEntry, RecordType,
+    },
     records::{read_clipboard, read_history, write_clipboard, write_history},
 };
 
@@ -59,6 +61,14 @@ pub fn handle_paste<P: AsRef<Path>>(
     destination_path: P,
     paste_content: Option<PasteContent>,
 ) -> Result<(Vec<AppInfo>, Vec<AppWarning>), AppError> {
+    handle_paste_with_prompt(destination_path, paste_content, get_overwrite_choice)
+}
+
+fn handle_paste_with_prompt<P: AsRef<Path>>(
+    destination_path: P,
+    paste_content: Option<PasteContent>,
+    prompt_func: fn(Metadata) -> OverwriteChoice,
+) -> Result<(Vec<AppInfo>, Vec<AppWarning>), AppError> {
     let destination_path = get_absolute_path(&destination_path)?;
     let mut infos = Vec::new();
     let mut warnings = Vec::new();
@@ -93,31 +103,27 @@ pub fn handle_paste<P: AsRef<Path>>(
         };
 
         let mut quit = false;
-        if !overwrite_all && !skip_all {
-            match get_metadata(&destination_path) {
+        let file_name = entry.path.file_name().ok_or_else(|| FileError::FileName {
+            path: entry.path.clone(),
+        })?;
+        let prospective_path = destination_path.join(file_name);
+
+        if !overwrite_all && !skip_all && prospective_path.exists() {
+            match get_metadata(&prospective_path) {
                 Ok(metadata) => {
-                    let mut valid_input = true;
-                    loop {
-                        println!(
-                            "[Warning]: Destination path already exists (size: {:?}). Overwrite?",
-                            metadata.size
-                        );
-                        println!(
-                        "y: yes; n: no; a: overwrite all remaining; s: skip all remaining; q: quit"
-                    );
-                        let choice: String = read!();
-                        match choice.as_str() {
-                            "y" => options.overwrite = true,
-                            "n" => options.skip_exist = true,
-                            "a" => overwrite_all = true,
-                            "s" => skip_all = true,
-                            "q" => quit = true,
-                            _ => valid_input = false,
+                    let overwrite_choice = prompt_func(metadata);
+                    match overwrite_choice {
+                        OverwriteChoice::Yes => options.overwrite = true,
+                        OverwriteChoice::No => options.skip_exist = true,
+                        OverwriteChoice::OverwriteAll => {
+                            overwrite_all = true;
+                            options.overwrite = true;
                         }
-                        if valid_input {
-                            break;
+                        OverwriteChoice::SkipAll => {
+                            skip_all = true;
+                            options.skip_exist = true;
                         }
-                        println!("Invalid input. Please try again.");
+                        OverwriteChoice::Quit => quit = true,
                     }
                 }
                 Err(FileError::PathNotFound { path: _ }) => (),
@@ -128,105 +134,78 @@ pub fn handle_paste<P: AsRef<Path>>(
             break;
         }
 
-        let operation_result = match entry.operation {
-            Operation::Copy => copy_items(&[&entry.path], &destination_path, &options)
-                .map_err(|source| FileError::Copy {
+        let operation_result: Result<bool, FileError> = match entry.operation {
+            Operation::Copy => match copy_items(&[&entry.path], &destination_path, &options) {
+                Ok(bytes_copied) => {
+                    if options.skip_exist && bytes_copied == 0 && prospective_path.exists() {
+                        Ok(false)
+                    } else {
+                        Ok(true)
+                    }
+                }
+                Err(source) => Err(FileError::Copy {
                     from_path: entry.path.clone(),
                     to_path: destination_path.clone(),
                     source,
-                })
-                .map(|_| ()),
-            Operation::Cut => move_items(&[&entry.path], &destination_path, &options)
-                .map_err(|source| FileError::Move {
+                }),
+            },
+            Operation::Cut => match move_items(&[&entry.path], &destination_path, &options) {
+                Ok(bytes_moved) => {
+                    if options.skip_exist && bytes_moved == 0 && prospective_path.exists() {
+                        Ok(false)
+                    } else {
+                        Ok(true)
+                    }
+                }
+                Err(source) => Err(FileError::Move {
                     from_path: entry.path.clone(),
                     to_path: destination_path.clone(),
                     source,
-                })
-                .map(|_| ()),
+                }),
+            },
             Operation::Link => {
-                let file_name = entry.path.file_name().ok_or_else(|| FileError::FileName {
-                    path: entry.path.clone(),
-                })?;
-                let mut new_path = destination_path.clone();
-                new_path.push(file_name);
-                symlink(&entry.path, &new_path)
-                    .map_err(|source| FileError::Link {
+                if options.overwrite {
+                    let _ = remove_items(&[&prospective_path]);
+                }
+                match symlink(&entry.path, &prospective_path) {
+                    Ok(_) => Ok(true),
+                    Err(error)
+                        if error.kind() == IoErrorKind::AlreadyExists && options.skip_exist =>
+                    {
+                        Ok(false)
+                    }
+                    Err(source) => Err(FileError::Link {
                         from_path: entry.path.clone(),
                         to_path: destination_path.clone(),
                         source,
-                    })
-                    .map(|_| ())
+                    }),
+                }
             }
         };
 
         match operation_result {
-            Ok(_) => {
-                if let Operation::Cut = entry.operation {
-                    let file_name = entry.path.file_name().ok_or_else(|| FileError::FileName {
+            Ok(pasted) => {
+                if pasted {
+                    if let Operation::Cut = entry.operation {
+                        let file_name =
+                            entry.path.file_name().ok_or_else(|| FileError::FileName {
+                                path: entry.path.clone(),
+                            })?;
+                        let mut new_path = destination_path.clone();
+                        new_path.push(file_name);
+                        entry.path = new_path;
+                    }
+                    if let Some(clipboard_entries) = clipboard_entries.as_mut() {
+                        clipboard_entries.retain(|clipboard_entry| clipboard_entry.id != entry.id);
+                    }
+                    if let Some(history_entries) = history_entries.as_mut() {
+                        history_entries.push_front(entry.clone());
+                    }
+                    infos.push(AppInfo::Paste {
                         path: entry.path.clone(),
-                    })?;
-                    let mut new_path = destination_path.clone();
-                    new_path.push(file_name);
-                    entry.path = new_path;
+                    });
                 }
-                if let Some(clipboard_entries) = clipboard_entries.as_mut() {
-                    clipboard_entries.retain(|clipboard_entry| clipboard_entry.id != entry.id);
-                }
-                if let Some(history_entries) = history_entries.as_mut() {
-                    history_entries.push_front(entry.clone());
-                }
-                infos.push(AppInfo::Paste {
-                    path: entry.path.clone(),
-                });
             }
-            Err(FileError::Copy {
-                from_path,
-                to_path,
-                source,
-            })
-            | Err(FileError::Move {
-                from_path,
-                to_path,
-                source,
-            }) => match source.kind {
-                FsErrorKind::PermissionDenied => {
-                    warnings.push(AppWarning::File(FileWarning::NoPermission {
-                        path: from_path,
-                        destination: to_path,
-                    }));
-                }
-                _ => {
-                    return Err(AppError::File(FileError::Copy {
-                        from_path,
-                        to_path,
-                        source,
-                    }))
-                }
-            },
-            Err(FileError::Link {
-                from_path,
-                to_path,
-                source,
-            }) => match source.kind() {
-                IoErrorKind::AlreadyExists => {
-                    warnings.push(AppWarning::File(FileWarning::AlreadyExists {
-                        path: from_path,
-                    }));
-                }
-                IoErrorKind::PermissionDenied => {
-                    warnings.push(AppWarning::File(FileWarning::NoPermission {
-                        path: from_path,
-                        destination: to_path,
-                    }));
-                }
-                _ => {
-                    return Err(AppError::File(FileError::Link {
-                        from_path,
-                        to_path,
-                        source,
-                    }))
-                }
-            },
             Err(error) => return Err(AppError::File(error)),
         }
     }
@@ -417,6 +396,22 @@ fn check_validity(entry: &RecordEntry) -> Result<Option<FileWarning>, FileError>
     Ok(None)
 }
 
+fn get_overwrite_choice(metadata: Metadata) -> OverwriteChoice {
+    loop {
+        println!(
+            "[Warning]: Destination path already exists (size: {:?}). Overwrite?",
+            metadata.size
+        );
+        println!("y: yes; n: no; a: overwrite all remaining; s: skip all remaining; q: quit");
+
+        let choice: String = read!();
+        if let Some(user_choice) = OverwriteChoice::from_str(&choice) {
+            return user_choice;
+        }
+        println!("Invalid input. Please try again.");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,6 +431,26 @@ mod tests {
         time::Duration,
     };
     use tempfile::tempdir;
+
+    fn mock_overwrite_choice_yes(_: Metadata) -> OverwriteChoice {
+        OverwriteChoice::Yes
+    }
+
+    fn mock_overwrite_choice_no(_: Metadata) -> OverwriteChoice {
+        OverwriteChoice::No
+    }
+
+    fn mock_overwrite_choice_quit(_: Metadata) -> OverwriteChoice {
+        OverwriteChoice::Quit
+    }
+
+    fn mock_overwrite_choice_overwrite_all(_: Metadata) -> OverwriteChoice {
+        OverwriteChoice::OverwriteAll
+    }
+
+    fn mock_overwrite_choice_skip_all(_: Metadata) -> OverwriteChoice {
+        OverwriteChoice::SkipAll
+    }
 
     #[test]
     #[serial]
@@ -464,7 +479,8 @@ mod tests {
         let entry = get_test_entry(&file_path, Operation::Copy);
         write_clipboard(&[entry]).unwrap();
 
-        let (infos, warnings) = handle_paste(&env.dest_dir, None).unwrap();
+        let (infos, warnings) = 
+            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
 
         assert_eq!(infos.len(), 1);
         assert!(warnings.is_empty());
@@ -484,7 +500,8 @@ mod tests {
         let entry = get_test_entry(&file_path, Operation::Cut);
         write_clipboard(&[entry]).unwrap();
 
-        let (infos, warnings) = handle_paste(&env.dest_dir, None).unwrap();
+        let (infos, warnings) = 
+            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
 
         assert_eq!(infos.len(), 1);
         assert!(warnings.is_empty());
@@ -506,7 +523,7 @@ mod tests {
         let entry = get_test_entry(&file_path, Operation::Link);
         write_clipboard(&[entry]).unwrap();
 
-        handle_paste(&env.dest_dir, None).unwrap();
+        handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
 
         let dest_link_path = env.dest_dir.join("a.txt");
         assert!(dest_link_path.exists());
@@ -530,7 +547,8 @@ mod tests {
         );
         write_clipboard(&[entry.clone()]).unwrap();
 
-        let (infos, warnings) = handle_paste(&env.dest_dir, None).unwrap();
+        let (infos, warnings) = 
+            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
 
         assert!(infos.is_empty());
         assert!(warnings.is_empty());
@@ -551,18 +569,73 @@ mod tests {
         let destination_file_path = env.dest_dir.join("a.txt");
         create_test_file(&destination_file_path, "a");
 
-        let (infos, warnings) = handle_paste(&env.dest_dir, None).unwrap();
+        let (infos, warnings) = 
+            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_quit).unwrap();
 
         assert!(infos.is_empty());
-        assert!(!warnings.is_empty());
-        assert!(matches!(
-            warnings[0],
-            AppWarning::File(FileWarning::AlreadyExists { .. })
-        ));
+        assert!(warnings.is_empty());
 
         let clipboard = read_clipboard().unwrap().unwrap();
         assert_eq!(clipboard.len(), 1);
         assert_eq!(clipboard[0].id, entry.id);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_paste_overwrite_choice_no() {
+        let env = setup_test_env();
+        let file_path = env.source_dir.join("a.txt");
+        create_test_file(&file_path, "a");
+        let entry = get_test_entry(&file_path, Operation::Copy);
+        write_clipboard(&[entry.clone()]).unwrap();
+        let destination_file_path = env.dest_dir.join("a.txt");
+        create_test_file(&destination_file_path, "destination content");
+
+        let (infos, warnings) = 
+            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_no).unwrap();
+
+        assert!(infos.is_empty());
+        assert!(warnings.is_empty());
+
+        let content = std::fs::read_to_string(destination_file_path).unwrap();
+        assert_eq!(content, "destination content");
+
+        let clipboard = read_clipboard().unwrap().unwrap();
+        assert_eq!(clipboard.len(), 1);
+        assert_eq!(clipboard[0].id, entry.id);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_paste_overwrite_choice_skip_all() {
+        let env = setup_test_env();
+        // file 'a.txt' will exist in destination
+        let file_a_path = env.source_dir.join("a.txt");
+        create_test_file(&file_a_path, "source a");
+        let entry_a = get_test_entry(&file_a_path, Operation::Copy);
+        let dest_a_path = env.dest_dir.join("a.txt");
+        create_test_file(&dest_a_path, "destination a");
+
+        // file 'b.txt' will not exist in destination
+        let file_b_path = env.source_dir.join("b.txt");
+        create_test_file(&file_b_path, "source b");
+        let entry_b = get_test_entry(&file_b_path, Operation::Copy);
+
+        write_clipboard(&[entry_a.clone(), entry_b.clone()]).unwrap();
+
+        let (infos, warnings) = 
+            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_skip_all).unwrap();
+
+        assert_eq!(infos.len(), 1);
+        assert!(warnings.is_empty());
+        assert!(env.dest_dir.join("b.txt").exists());
+
+        let clipboard = read_clipboard().unwrap().unwrap();
+        assert_eq!(clipboard.len(), 1);
+        assert_eq!(clipboard[0].id, entry_a.id);
+
+        let content_a = std::fs::read_to_string(dest_a_path).unwrap();
+        assert_eq!(content_a, "destination a");
     }
 
     #[test]
@@ -788,18 +861,15 @@ mod tests {
 
         write_clipboard(&[entry1, entry2]).unwrap();
 
-        let (infos, warnings) = handle_paste(&env.dest_dir, None).unwrap();
+        let (infos, warnings) = 
+            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_overwrite_all)
+                .unwrap();
 
-        assert_eq!(infos.len(), 1);
-        assert_eq!(warnings.len(), 1);
+        assert_eq!(infos.len(), 2);
+        assert!(warnings.is_empty());
 
-        assert!(matches!(infos[0], AppInfo::Paste { .. }));
-        assert!(matches!(
-            warnings[0],
-            AppWarning::File(FileWarning::AlreadyExists { .. })
-        ));
         assert!(env.dest_dir.join("duplicate.txt").exists());
         let clipboard = read_clipboard().unwrap().unwrap();
-        assert_eq!(clipboard.len(), 1);
+        assert!(clipboard.is_empty());
     }
 }
