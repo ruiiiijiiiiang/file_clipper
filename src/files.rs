@@ -3,12 +3,13 @@ use glob::glob;
 use std::{
     collections::VecDeque,
     env::current_dir,
-    fs::symlink_metadata,
+    fs::{metadata, symlink_metadata},
     io::ErrorKind as IoErrorKind,
     os::unix::fs::symlink,
     path::{Path, PathBuf},
     time::SystemTime,
 };
+use text_io::read;
 use uuid::Uuid;
 
 use crate::{
@@ -78,14 +79,54 @@ pub fn handle_paste<P: AsRef<Path>>(
         },
     };
 
-    let options = CopyOptions::new();
+    let mut overwrite_all = false;
+    let mut skip_all = false;
     for mut entry in entries_to_paste {
+        let mut options = CopyOptions::new();
+        options.overwrite = overwrite_all;
+        options.skip_exist = skip_all;
         let validity = check_validity(&entry);
         match validity {
             Err(_) => continue,
             Ok(Some(warning)) => warnings.push(AppWarning::File(warning)),
             Ok(_) => (),
         };
+
+        let mut quit = false;
+        if !overwrite_all && !skip_all {
+            match get_metadata(&destination_path) {
+                Ok(metadata) => {
+                    let mut valid_input = true;
+                    loop {
+                        println!(
+                            "[Warning]: Destination path already exists (size: {:?}). Overwrite?",
+                            metadata.size
+                        );
+                        println!(
+                        "y: yes; n: no; a: overwrite all remaining; s: skip all remaining; q: quit"
+                    );
+                        let choice: String = read!();
+                        match choice.as_str() {
+                            "y" => options.overwrite = true,
+                            "n" => options.skip_exist = true,
+                            "a" => overwrite_all = true,
+                            "s" => skip_all = true,
+                            "q" => quit = true,
+                            _ => valid_input = false,
+                        }
+                        if valid_input {
+                            break;
+                        }
+                        println!("Invalid input. Please try again.");
+                    }
+                }
+                Err(FileError::PathNotFound { path: _ }) => (),
+                Err(error) => return Err(AppError::File(error)),
+            };
+        }
+        if quit {
+            break;
+        }
 
         let operation_result = match entry.operation {
             Operation::Copy => copy_items(&[&entry.path], &destination_path, &options)
@@ -148,11 +189,6 @@ pub fn handle_paste<P: AsRef<Path>>(
                 to_path,
                 source,
             }) => match source.kind {
-                FsErrorKind::AlreadyExists => {
-                    warnings.push(AppWarning::File(FileWarning::AlreadyExists {
-                        path: from_path,
-                    }));
-                }
                 FsErrorKind::PermissionDenied => {
                     warnings.push(AppWarning::File(FileWarning::NoPermission {
                         path: from_path,
