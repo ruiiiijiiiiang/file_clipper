@@ -21,6 +21,16 @@
           inherit system;
           overlays = [ (import rust-overlay) ];
         };
+
+        fileClipperPkg = pkgs.rustPlatform.buildRustPackage {
+          pname = "file_clipper";
+          version = "0.1.1";
+
+          src = ./.;
+          binaries = [ "clp" ];
+
+          cargoHash = "sha256-X6IQsF/+2tPt8XAq4OnXsghV8FDefqksCMuPV+Rjth4=";
+        };
       in
       {
         devShell = pkgs.mkShell {
@@ -29,14 +39,11 @@
           ];
         };
 
-        packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "file_clipper";
-          version = "0.1.1";
+        packages.default = fileClipperPkg;
 
-          src = ./.;
-          binaries = [ "clp" ];
-
-          cargoHash = "sha256-X6IQsF/+2tPt8XAq4OnXsghV8FDefqksCMuPV+Rjth4=";
+        apps.default = {
+          type = "app";
+          program = "${fileClipperPkg}/bin/clp";
         };
       }
     );
