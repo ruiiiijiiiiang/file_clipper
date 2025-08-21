@@ -34,6 +34,7 @@
           version = "0.1.1";
 
           src = ./.;
+          binaries = [ "clp" ];
 
           cargoHash = "sha256-X6IQsF/+2tPt8XAq4OnXsghV8FDefqksCMuPV+Rjth4=";
         };
