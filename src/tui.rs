@@ -40,6 +40,7 @@ pub struct Tui {
     pub should_exit: bool,
     pub warnings: Vec<AppWarning>,
     pub infos: Vec<AppInfo>,
+    pub paste_content: Option<PasteContent>,
 }
 
 type ColumnDef<'a> = (
@@ -64,6 +65,7 @@ impl Tui {
             mode,
             warnings: Vec::new(),
             infos: Vec::new(),
+            paste_content: None,
         })
     }
 
@@ -101,6 +103,18 @@ impl Tui {
 
         let _ = terminal.clear();
         ratatui::restore();
+
+        if let Some(paste_content) = self.paste_content {
+            let destination_path = current_dir().map_err(|source| FileError::Cwd { source })?;
+            match handle_paste(destination_path, Some(paste_content)) {
+                Err(error) => return Err(error),
+                Ok((infos, warnings)) => {
+                    self.infos.extend(infos);
+                    self.warnings.extend(warnings);
+                }
+            }
+        }
+
         match loop_result {
             Ok(_) => Ok((self.infos, self.warnings)),
             Err(error) => Err(error),
@@ -391,7 +405,6 @@ impl Tui {
     }
 
     fn paste(&mut self) -> Result<(), AppError> {
-        let destination_path = current_dir().map_err(|source| FileError::Cwd { source })?;
         let mut marked_entries: Vec<RecordEntry> = self
             .entries
             .clone()
@@ -416,13 +429,7 @@ impl Tui {
             entries: marked_entries,
             source: self.mode.clone(),
         };
-        match handle_paste(destination_path, Some(paste_content)) {
-            Err(error) => return Err(error),
-            Ok((infos, warnings)) => {
-                self.infos.extend(infos);
-                self.warnings.extend(warnings);
-            }
-        }
+        self.paste_content = Some(paste_content);
         self.exit();
         Ok(())
     }

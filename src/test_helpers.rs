@@ -108,6 +108,7 @@ pub fn create_test_tui(entries_count: usize) -> Tui {
         should_exit: false,
         warnings: Vec::new(),
         infos: Vec::new(),
+        paste_content: None,
     };
     if !entries.is_empty() {
         tui.table_state.select(Some(0));

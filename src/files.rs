@@ -20,6 +20,9 @@ use crate::{
     records::{read_clipboard, read_history, write_clipboard, write_history},
 };
 
+const OVERWRITE_CHOICE_PROMPT: &str = "[Warning]: Destination path already exists. Overwrite?\nY: yes; N: no; A: overwrite all remaining; S: skip all remaining; Q: quit";
+const OVERWRITE_CHOICE_RETRY: &str = "Invalid input. Please try again.";
+
 pub fn handle_transfer<P: AsRef<Path>>(
     paths: Vec<P>,
     operation: Operation,
@@ -67,7 +70,7 @@ pub fn handle_paste<P: AsRef<Path>>(
 fn handle_paste_with_prompt<P: AsRef<Path>>(
     destination_path: P,
     paste_content: Option<PasteContent>,
-    prompt_func: fn(Metadata) -> OverwriteChoice,
+    get_overwrite_choice: fn() -> OverwriteChoice,
 ) -> Result<(Vec<AppInfo>, Vec<AppWarning>), AppError> {
     let destination_path = get_absolute_path(&destination_path)?;
     let mut infos = Vec::new();
@@ -109,26 +112,20 @@ fn handle_paste_with_prompt<P: AsRef<Path>>(
         let prospective_path = destination_path.join(file_name);
 
         if !overwrite_all && !skip_all && prospective_path.exists() {
-            match get_metadata(&prospective_path) {
-                Ok(metadata) => {
-                    let overwrite_choice = prompt_func(metadata);
-                    match overwrite_choice {
-                        OverwriteChoice::Yes => options.overwrite = true,
-                        OverwriteChoice::No => options.skip_exist = true,
-                        OverwriteChoice::OverwriteAll => {
-                            overwrite_all = true;
-                            options.overwrite = true;
-                        }
-                        OverwriteChoice::SkipAll => {
-                            skip_all = true;
-                            options.skip_exist = true;
-                        }
-                        OverwriteChoice::Quit => quit = true,
-                    }
+            let overwrite_choice = get_overwrite_choice();
+            match overwrite_choice {
+                OverwriteChoice::Yes => options.overwrite = true,
+                OverwriteChoice::No => options.skip_exist = true,
+                OverwriteChoice::OverwriteAll => {
+                    overwrite_all = true;
+                    options.overwrite = true;
                 }
-                Err(FileError::PathNotFound { path: _ }) => (),
-                Err(error) => return Err(AppError::File(error)),
-            };
+                OverwriteChoice::SkipAll => {
+                    skip_all = true;
+                    options.skip_exist = true;
+                }
+                OverwriteChoice::Quit => quit = true,
+            }
         }
         if quit {
             break;
@@ -396,19 +393,14 @@ fn check_validity(entry: &RecordEntry) -> Result<Option<FileWarning>, FileError>
     Ok(None)
 }
 
-fn get_overwrite_choice(metadata: Metadata) -> OverwriteChoice {
+fn get_overwrite_choice() -> OverwriteChoice {
     loop {
-        println!(
-            "[Warning]: Destination path already exists (size: {:?}). Overwrite?",
-            metadata.size
-        );
-        println!("y: yes; n: no; a: overwrite all remaining; s: skip all remaining; q: quit");
-
+        println!("{}", OVERWRITE_CHOICE_PROMPT);
         let choice: String = read!();
         if let Some(user_choice) = OverwriteChoice::from_str(&choice) {
             return user_choice;
         }
-        println!("Invalid input. Please try again.");
+        println!("{}", OVERWRITE_CHOICE_RETRY);
     }
 }
 
@@ -432,23 +424,23 @@ mod tests {
     };
     use tempfile::tempdir;
 
-    fn mock_overwrite_choice_yes(_: Metadata) -> OverwriteChoice {
+    fn mock_overwrite_choice_yes() -> OverwriteChoice {
         OverwriteChoice::Yes
     }
 
-    fn mock_overwrite_choice_no(_: Metadata) -> OverwriteChoice {
+    fn mock_overwrite_choice_no() -> OverwriteChoice {
         OverwriteChoice::No
     }
 
-    fn mock_overwrite_choice_quit(_: Metadata) -> OverwriteChoice {
+    fn mock_overwrite_choice_quit() -> OverwriteChoice {
         OverwriteChoice::Quit
     }
 
-    fn mock_overwrite_choice_overwrite_all(_: Metadata) -> OverwriteChoice {
+    fn mock_overwrite_choice_overwrite_all() -> OverwriteChoice {
         OverwriteChoice::OverwriteAll
     }
 
-    fn mock_overwrite_choice_skip_all(_: Metadata) -> OverwriteChoice {
+    fn mock_overwrite_choice_skip_all() -> OverwriteChoice {
         OverwriteChoice::SkipAll
     }
 
@@ -479,7 +471,7 @@ mod tests {
         let entry = get_test_entry(&file_path, Operation::Copy);
         write_clipboard(&[entry]).unwrap();
 
-        let (infos, warnings) = 
+        let (infos, warnings) =
             handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
 
         assert_eq!(infos.len(), 1);
@@ -500,7 +492,7 @@ mod tests {
         let entry = get_test_entry(&file_path, Operation::Cut);
         write_clipboard(&[entry]).unwrap();
 
-        let (infos, warnings) = 
+        let (infos, warnings) =
             handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
 
         assert_eq!(infos.len(), 1);
@@ -547,7 +539,7 @@ mod tests {
         );
         write_clipboard(&[entry.clone()]).unwrap();
 
-        let (infos, warnings) = 
+        let (infos, warnings) =
             handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
 
         assert!(infos.is_empty());
@@ -569,7 +561,7 @@ mod tests {
         let destination_file_path = env.dest_dir.join("a.txt");
         create_test_file(&destination_file_path, "a");
 
-        let (infos, warnings) = 
+        let (infos, warnings) =
             handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_quit).unwrap();
 
         assert!(infos.is_empty());
@@ -591,7 +583,7 @@ mod tests {
         let destination_file_path = env.dest_dir.join("a.txt");
         create_test_file(&destination_file_path, "destination content");
 
-        let (infos, warnings) = 
+        let (infos, warnings) =
             handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_no).unwrap();
 
         assert!(infos.is_empty());
@@ -623,7 +615,7 @@ mod tests {
 
         write_clipboard(&[entry_a.clone(), entry_b.clone()]).unwrap();
 
-        let (infos, warnings) = 
+        let (infos, warnings) =
             handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_skip_all).unwrap();
 
         assert_eq!(infos.len(), 1);
@@ -861,7 +853,7 @@ mod tests {
 
         write_clipboard(&[entry1, entry2]).unwrap();
 
-        let (infos, warnings) = 
+        let (infos, warnings) =
             handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_overwrite_all)
                 .unwrap();
 

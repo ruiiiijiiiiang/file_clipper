@@ -82,7 +82,7 @@ pub enum OverwriteChoice {
 
 impl OverwriteChoice {
     pub fn from_str(input: &str) -> Option<OverwriteChoice> {
-        match input {
+        match input.to_lowercase().as_str() {
             "y" => Some(OverwriteChoice::Yes),
             "n" => Some(OverwriteChoice::No),
             "a" => Some(OverwriteChoice::OverwriteAll),
