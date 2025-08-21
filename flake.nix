@@ -3,39 +3,40 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, ... }:
-    let
-      system = pkgs.system;
-      pkgs = import nixpkgs {
-        inherit system;
-      };
-    in {
-      packages.${system}.default = pkgs.stdenv.mkDerivation {
-        pname = "file_clipper";
-        version = "0.1.1";
-        src = self;
-
-        nativeBuildInputs = with pkgs; [
-          pkgs.rustPlatform.buildRustPackage
-        ];
-        cargoBuildFlags = "--release";
-        cargoInstallFlags = "--root $out --path .";
-
-        meta = with pkgs.lib; {
-          description = "Command Line File Clipboard";
-          homepage = "https://github.com/ruiiiijiiiiang/file_clipper";
-          license = licenses.mit;
-          platforms = platforms.linux;
+  outputs =
+    {
+      self,
+      nixpkgs,
+      rust-overlay,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ (import rust-overlay) ];
         };
-      };
+      in
+      {
+        devShell = pkgs.mkShell {
+          packages = [
+            pkgs.rust-bin.stable.latest.default
+          ];
+        };
 
-      devShells.${system}.default = pkgs.mkShell {
-        packages = with pkgs; [
-          rustc
-          cargo
-        ] ++ self.packages.${system}.default.buildInputs;
-      };
-    };
+        packages.default = pkgs.rustPlatform.buildRustPackage {
+          pname = "file_clipper";
+          version = "0.1.1";
+
+          src = ./.;
+
+          cargoHash = "sha256-X6IQsF/+2tPt8XAq4OnXsghV8FDefqksCMuPV+Rjth4=";
+        };
+      }
+    );
 }
