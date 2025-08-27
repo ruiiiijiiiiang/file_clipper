@@ -29,7 +29,7 @@
           src = ./.;
           binaries = [ "clp" ];
 
-          cargoHash = "sha256-X6IQsF/+2tPt8XAq4OnXsghV8FDefqksCMuPV+Rjth4=";
+          cargoHash = "sha256-9avdl57UCfzBe6JmXFmnkjtOz0rZjKt8OFt1K2udtbA=";
         };
       in
       {
