@@ -5,14 +5,15 @@ use clap::{Parser, Subcommand};
 use crate::models::Action;
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
+#[command(author, version, about, long_about = None, propagate_version = true)]
+pub struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Copy files to the clipboard
     #[command(alias = "cp")]
     #[command(alias = "c")]
     #[command(alias = "y")]
@@ -21,6 +22,7 @@ enum Commands {
         paths: Vec<PathBuf>,
     },
 
+    /// Cut files to the clipboard
     #[command(alias = "mv")]
     #[command(alias = "d")]
     #[command(alias = "x")]
@@ -29,6 +31,7 @@ enum Commands {
         paths: Vec<PathBuf>,
     },
 
+    /// Create symbolic links to files and add them to the clipboard
     #[command(alias = "ln")]
     #[command(alias = "s")]
     Link {
@@ -36,6 +39,7 @@ enum Commands {
         paths: Vec<PathBuf>,
     },
 
+    /// Paste files from the clipboard to the specified directory
     #[command(alias = "p")]
     #[command(alias = "v")]
     Paste {
@@ -43,14 +47,16 @@ enum Commands {
         path: PathBuf,
     },
 
+    /// List files currently in the clipboard
     #[command(alias = "l")]
     #[command(alias = "ls")]
     List,
 
+    /// Show the history of clipboard operations
     #[command(alias = "h")]
     History,
 
-    #[command()]
+    /// Clear the clipboard and history
     Clear,
 }
 

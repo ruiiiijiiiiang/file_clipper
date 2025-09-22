@@ -1,4 +1,6 @@
-use std::error::Error;
+use clap::CommandFactory;
+use clap_complete::{generate, Shell};
+use std::{error::Error, io, str::FromStr};
 
 mod cli;
 mod errors;
@@ -11,7 +13,7 @@ mod tui;
 pub mod test_helpers;
 
 use {
-    cli::handle_cli,
+    cli::{handle_cli, Cli},
     errors::{AppError, AppInfo, AppWarning},
     files::{handle_paste, handle_transfer},
     models::{Action, Operation, RecordType},
@@ -20,6 +22,19 @@ use {
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 2 && args[1] == "completions" {
+        let shell = if args.len() > 2 {
+            Shell::from_str(args[2].as_str()).expect(
+                "Invalid shell provided; possible values: [bash, elvish, fish, powershell, zsh]",
+            )
+        } else {
+            Shell::from_env().unwrap_or(Shell::Bash)
+        };
+        generate(shell, &mut Cli::command(), "clp", &mut io::stdout());
+        return Ok(());
+    }
+
     color_eyre::install()?;
     let mut app_warnings: Vec<AppWarning> = Vec::new();
     let mut app_infos: Vec<AppInfo> = Vec::new();

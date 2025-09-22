@@ -20,7 +20,9 @@ use crate::{
     records::{read_clipboard, read_history, write_clipboard, write_history},
 };
 
-const OVERWRITE_CHOICE_PROMPT: &str = "[Warning]: Destination path already exists. Overwrite?\nY: yes; N: no; A: overwrite all remaining; S: skip all remaining; Q: quit";
+const OVERWRITE_CHOICE_WARNING: &str = "[Warning]: Destination path already exists at: ";
+const OVERWRITE_CHOICE_PROMPT: &str =
+    "Overwrite?\nY: yes; N: no; A: overwrite all remaining; S: skip all remaining; Q: quit";
 const OVERWRITE_CHOICE_RETRY: &str = "Invalid input. Please try again.";
 
 pub fn handle_transfer<P: AsRef<Path>>(
@@ -70,7 +72,7 @@ pub fn handle_paste<P: AsRef<Path>>(
 fn handle_paste_with_prompt<P: AsRef<Path>>(
     destination_path: P,
     paste_content: Option<PasteContent>,
-    get_overwrite_choice: fn() -> OverwriteChoice,
+    get_overwrite_choice: fn(path: &Path) -> OverwriteChoice,
 ) -> Result<(Vec<AppInfo>, Vec<AppWarning>), AppError> {
     let destination_path = get_absolute_path(&destination_path)?;
     let mut infos = Vec::new();
@@ -112,7 +114,7 @@ fn handle_paste_with_prompt<P: AsRef<Path>>(
         let prospective_path = destination_path.join(file_name);
 
         if !overwrite_all && !skip_all && prospective_path.exists() {
-            let overwrite_choice = get_overwrite_choice();
+            let overwrite_choice = get_overwrite_choice(&prospective_path);
             match overwrite_choice {
                 OverwriteChoice::Yes => options.overwrite = true,
                 OverwriteChoice::No => options.skip_exist = true,
@@ -393,8 +395,10 @@ fn check_validity(entry: &RecordEntry) -> Result<Option<FileWarning>, FileError>
     Ok(None)
 }
 
-fn get_overwrite_choice() -> OverwriteChoice {
+fn get_overwrite_choice(path: &Path) -> OverwriteChoice {
     loop {
+        println!("{}", OVERWRITE_CHOICE_WARNING);
+        println!("{}", path.to_string_lossy());
         println!("{}", OVERWRITE_CHOICE_PROMPT);
         let choice: String = read!();
         if let Some(user_choice) = OverwriteChoice::from_str(&choice) {
@@ -424,23 +428,23 @@ mod tests {
     };
     use tempfile::tempdir;
 
-    fn mock_overwrite_choice_yes() -> OverwriteChoice {
+    fn mock_overwrite_choice_yes(_: &Path) -> OverwriteChoice {
         OverwriteChoice::Yes
     }
 
-    fn mock_overwrite_choice_no() -> OverwriteChoice {
+    fn mock_overwrite_choice_no(_: &Path) -> OverwriteChoice {
         OverwriteChoice::No
     }
 
-    fn mock_overwrite_choice_quit() -> OverwriteChoice {
+    fn mock_overwrite_choice_quit(_: &Path) -> OverwriteChoice {
         OverwriteChoice::Quit
     }
 
-    fn mock_overwrite_choice_overwrite_all() -> OverwriteChoice {
+    fn mock_overwrite_choice_overwrite_all(_: &Path) -> OverwriteChoice {
         OverwriteChoice::OverwriteAll
     }
 
-    fn mock_overwrite_choice_skip_all() -> OverwriteChoice {
+    fn mock_overwrite_choice_skip_all(_: &Path) -> OverwriteChoice {
         OverwriteChoice::SkipAll
     }
 
@@ -537,7 +541,7 @@ mod tests {
             None,
             None,
         );
-        write_clipboard(&[entry.clone()]).unwrap();
+        write_clipboard(std::slice::from_ref(&entry)).unwrap();
 
         let (infos, warnings) =
             handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
@@ -557,7 +561,7 @@ mod tests {
         let file_path = env.source_dir.join("a.txt");
         create_test_file(&file_path, "a");
         let entry = get_test_entry(&file_path, Operation::Copy);
-        write_clipboard(&[entry.clone()]).unwrap();
+        write_clipboard(std::slice::from_ref(&entry)).unwrap();
         let destination_file_path = env.dest_dir.join("a.txt");
         create_test_file(&destination_file_path, "a");
 
@@ -579,7 +583,7 @@ mod tests {
         let file_path = env.source_dir.join("a.txt");
         create_test_file(&file_path, "a");
         let entry = get_test_entry(&file_path, Operation::Copy);
-        write_clipboard(&[entry.clone()]).unwrap();
+        write_clipboard(std::slice::from_ref(&entry)).unwrap();
         let destination_file_path = env.dest_dir.join("a.txt");
         create_test_file(&destination_file_path, "destination content");
 
