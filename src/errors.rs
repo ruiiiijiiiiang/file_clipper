@@ -1,4 +1,3 @@
-use fs_extra::error::Error as FsError;
 use glob::{GlobError, PatternError};
 use std::{io::Error as IoError, path::PathBuf};
 use thiserror::Error;
@@ -20,35 +19,45 @@ pub enum RecordError {
     #[error("Could not get the user's home directory. Please check your permissions.")]
     GetHomeDir,
 
-    #[error("Could not create configuration directory at '{path}'. Please check permissions or create it manually.")]
+    #[error(
+        "Could not create configuration directory at '{path}'. Please check permissions or create it manually."
+    )]
     CreateConfigDir {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Could not create record file at '{path}'. Please check permissions and available disk space.")]
+    #[error(
+        "Could not create record file at '{path}'. Please check permissions and available disk space."
+    )]
     CreateRecordFile {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Could not open record file at '{path}'. Please ensure the file exists and you have permission to read it.")]
+    #[error(
+        "Could not open record file at '{path}'. Please ensure the file exists and you have permission to read it."
+    )]
     OpenRecordFile {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Could not read from record file at '{path}'. The file may be corrupted. Try running `clp clear` to reset it.")]
+    #[error(
+        "Could not read from record file at '{path}'. The file may be corrupted. Try running `clp clear` to reset it."
+    )]
     ReadRecordFile {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Could not parse data from record file at '{path}'. The file may be corrupted or have an invalid format. Try running `clp clear` to reset it.")]
+    #[error(
+        "Could not parse data from record file at '{path}'. The file may be corrupted or have an invalid format. Try running `clp clear` to reset it."
+    )]
     DeserializeRecordFile {
         path: PathBuf,
         #[source]
@@ -61,7 +70,9 @@ pub enum RecordError {
         source: toml::ser::Error,
     },
 
-    #[error("Could not write to record file at '{path}'. Please check permissions and available disk space.")]
+    #[error(
+        "Could not write to record file at '{path}'. Please check permissions and available disk space."
+    )]
     WriteRecordFile {
         path: PathBuf,
         #[source]
@@ -83,30 +94,50 @@ pub enum FileError {
     )]
     PathNotFound { path: PathBuf },
 
-    #[error("Could not determine the full path for '{path}'. Please check if the path is valid or if there are permission issues.")]
+    #[error(
+        "Could not determine the full path for '{path}'. Please check if the path is valid or if there are permission issues."
+    )]
     AbsolutePath {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Could not determine the current working directory. This may be a permission issue or a problem with the file system.")]
+    #[error(
+        "Could not determine the current working directory. This may be a permission issue or a problem with the file system."
+    )]
     Cwd {
         #[source]
         source: IoError,
     },
 
-    #[error("Could not access metadata for '{path}'. The path may be invalid or you may not have the necessary permissions.")]
+    #[error(
+        "Could not access metadata for '{path}'. The path may be invalid or you may not have the necessary permissions."
+    )]
     Metadata {
         path: PathBuf,
         #[source]
         source: IoError,
     },
 
-    #[error("Could not determine the file name for '{path}'. The path may be invalid or you may not have the necessary permissions.")]
+    #[error(
+        "Could not determine the file name for '{path}'. The path may be invalid or you may not have the necessary permissions."
+    )]
     FileName { path: PathBuf },
 
-    #[error("Could not read the last modified time for '{path}'. The path may be invalid or you may not have the necessary permissions.")]
+    #[error(
+        "Cannot paste {num_files} files into {to_path} because it is not a folder. When pasting multiple items, the destination must be a folder."
+    )]
+    FileNameCollision { num_files: usize, to_path: PathBuf },
+
+    #[error(
+        "Cannot create directory at '{path}'. Please check permissions and available disk space."
+    )]
+    CreateDir { path: PathBuf },
+
+    #[error(
+        "Could not read the last modified time for '{path}'. The path may be invalid or you may not have the necessary permissions."
+    )]
     ModifiedAccess {
         path: PathBuf,
         #[source]
@@ -116,23 +147,29 @@ pub enum FileError {
     #[error("The file type for '{path}' is not supported.")]
     UnsupportedType { path: PathBuf },
 
-    #[error("Could not copy '{from_path}' to '{to_path}'. Please check that the destination exists and you have sufficient permissions.")]
+    #[error(
+        "Could not copy '{from_path}' to '{to_path}'. Please check that the destination exists and you have sufficient permissions."
+    )]
     Copy {
         from_path: PathBuf,
         to_path: PathBuf,
         #[source]
-        source: FsError,
+        source: IoError,
     },
 
-    #[error("Could not move '{from_path}' to '{to_path}'. Please check that the destination exists and you have sufficient permissions.")]
+    #[error(
+        "Could not move '{from_path}' to '{to_path}'. Please check that the destination exists and you have sufficient permissions."
+    )]
     Move {
         from_path: PathBuf,
         to_path: PathBuf,
         #[source]
-        source: FsError,
+        source: IoError,
     },
 
-    #[error("Could not create a symlink from '{from_path}' to '{to_path}'. Please check that the destination exists and you have sufficient permissions.")]
+    #[error(
+        "Could not create a symlink from '{from_path}' to '{to_path}'. Please check that the destination exists and you have sufficient permissions."
+    )]
     Link {
         from_path: PathBuf,
         to_path: PathBuf,
@@ -140,7 +177,9 @@ pub enum FileError {
         source: IoError,
     },
 
-    #[error("Could not read files matching the pattern '{path}'. Please check the pattern and your file permissions.")]
+    #[error(
+        "Could not read files matching the pattern '{path}'. Please check the pattern and your file permissions."
+    )]
     GlobUnreadable {
         path: PathBuf,
         #[source]
@@ -196,14 +235,18 @@ pub enum FileWarning {
     #[error("File '{path}' was modified since last access. Consider reviewing recent changes.")]
     ModifiedMismatch { path: PathBuf },
 
-    #[error("File '{path}' changed type from {old_type} to {new_type}. This might indicate an unexpected alteration.")]
+    #[error(
+        "File '{path}' changed type from {old_type} to {new_type}. This might indicate an unexpected alteration."
+    )]
     TypeMismatch {
         path: PathBuf,
         old_type: String,
         new_type: String,
     },
 
-    #[error("File '{path}' changed size from {old_size} bytes to {new_size} bytes. Check if this change was intentional.")]
+    #[error(
+        "File '{path}' changed size from {old_size} bytes to {new_size} bytes. Check if this change was intentional."
+    )]
     SizeMismatch {
         path: PathBuf,
         old_size: u64,
@@ -216,7 +259,9 @@ pub enum FileWarning {
 
 #[derive(Debug, Error)]
 pub enum RecordWarning {
-    #[error("Could not read data from the clipboard file. It may be corrupted. Try running `clp clear` to reset it.")]
+    #[error(
+        "Could not read data from the clipboard file. It may be corrupted. Try running `clp clear` to reset it."
+    )]
     ClipboardUnreadable,
 
     #[error("Specified entry was not found in the clipboard.")]

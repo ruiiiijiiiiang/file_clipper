@@ -1,10 +1,10 @@
-use fs_extra::{copy_items, dir::CopyOptions, move_items, remove_items};
+use dircpy::copy_dir;
 use glob::glob;
 use std::{
     collections::VecDeque,
     env::current_dir,
-    fs::symlink_metadata,
-    io::ErrorKind as IoErrorKind,
+    fs::{copy, create_dir_all, remove_file, rename, symlink_metadata},
+    io::{Error as IoError, ErrorKind as IoErrorKind},
     os::unix::fs::symlink,
     path::{Path, PathBuf},
     time::SystemTime,
@@ -15,15 +15,11 @@ use uuid::Uuid;
 use crate::{
     errors::{AppError, AppInfo, AppWarning, FileError, FileWarning},
     models::{
-        EntryType, Metadata, Operation, OverwriteChoice, PasteContent, RecordEntry, RecordType,
+        CollisionResolution, CollisionResolutionChoice, EntryType, Metadata, Operation,
+        PasteContent, RecordEntry, RecordType,
     },
     records::{read_clipboard, read_history, write_clipboard, write_history},
 };
-
-const OVERWRITE_CHOICE_WARNING: &str = "[Warning]: Destination path already exists at: ";
-const OVERWRITE_CHOICE_PROMPT: &str =
-    "Overwrite?\nY: yes; N: no; A: overwrite all remaining; S: skip all remaining; Q: quit";
-const OVERWRITE_CHOICE_RETRY: &str = "Invalid input. Please try again.";
 
 pub fn handle_transfer<P: AsRef<Path>>(
     paths: Vec<P>,
@@ -66,19 +62,23 @@ pub fn handle_paste<P: AsRef<Path>>(
     destination_path: P,
     paste_content: Option<PasteContent>,
 ) -> Result<(Vec<AppInfo>, Vec<AppWarning>), AppError> {
-    handle_paste_with_prompt(destination_path, paste_content, get_overwrite_choice)
+    handle_paste_with_prompt(
+        destination_path,
+        paste_content,
+        get_collision_resolution_choice,
+    )
 }
 
 fn handle_paste_with_prompt<P: AsRef<Path>>(
     destination_path: P,
     paste_content: Option<PasteContent>,
-    get_overwrite_choice: fn(path: &Path) -> OverwriteChoice,
+    get_collision_resolution_choice: fn(path: &Path) -> CollisionResolutionChoice,
 ) -> Result<(Vec<AppInfo>, Vec<AppWarning>), AppError> {
     let destination_path = get_absolute_path(&destination_path)?;
     let mut infos = Vec::new();
     let mut warnings = Vec::new();
 
-    let (entries_to_paste, mut clipboard_entries, mut history_entries) = match &paste_content {
+    let (mut entries_to_paste, mut clipboard_entries, mut history_entries) = match &paste_content {
         None => (
             read_clipboard()?.unwrap_or(Vec::new()),
             Some(read_clipboard()?.unwrap_or(Vec::new())),
@@ -93,91 +93,90 @@ fn handle_paste_with_prompt<P: AsRef<Path>>(
             RecordType::History => (content.entries.clone(), None, None),
         },
     };
-
-    let mut overwrite_all = false;
-    let mut skip_all = false;
-    for mut entry in entries_to_paste {
-        let mut options = CopyOptions::new();
-        options.overwrite = overwrite_all;
-        options.skip_exist = skip_all;
-        let validity = check_validity(&entry);
+    entries_to_paste.retain(|entry| {
+        let validity = check_validity(entry);
         match validity {
-            Err(_) => continue,
-            Ok(Some(warning)) => warnings.push(AppWarning::File(warning)),
-            Ok(_) => (),
-        };
+            Err(_) => false,
+            Ok(Some(warning)) => {
+                warnings.push(AppWarning::File(warning));
+                true
+            }
+            Ok(_) => true,
+        }
+    });
+    if !destination_path.is_dir() && entries_to_paste.len() > 1 {
+        return Err(AppError::File(FileError::FileNameCollision {
+            num_files: entries_to_paste.len(),
+            to_path: destination_path,
+        }));
+    }
+
+    let mut resolve_all: Option<CollisionResolution> = None;
+    for mut entry in entries_to_paste {
+        let mut collision_resolution = resolve_all;
 
         let mut quit = false;
         let file_name = entry.path.file_name().ok_or_else(|| FileError::FileName {
             path: entry.path.clone(),
         })?;
-        let prospective_path = destination_path.join(file_name);
+        let prospective_path = if destination_path.is_dir() {
+            destination_path.join(file_name)
+        } else {
+            destination_path.clone()
+        };
 
-        if !overwrite_all && !skip_all && prospective_path.exists() {
-            let overwrite_choice = get_overwrite_choice(&prospective_path);
+        if collision_resolution.is_none() && prospective_path.exists() {
+            let overwrite_choice = get_collision_resolution_choice(&prospective_path);
             match overwrite_choice {
-                OverwriteChoice::Yes => options.overwrite = true,
-                OverwriteChoice::No => options.skip_exist = true,
-                OverwriteChoice::OverwriteAll => {
-                    overwrite_all = true;
-                    options.overwrite = true;
+                CollisionResolutionChoice::Yes => {
+                    collision_resolution = Some(CollisionResolution::Overwrite)
                 }
-                OverwriteChoice::SkipAll => {
-                    skip_all = true;
-                    options.skip_exist = true;
+                CollisionResolutionChoice::No => {
+                    collision_resolution = Some(CollisionResolution::Skip)
                 }
-                OverwriteChoice::Quit => quit = true,
+                CollisionResolutionChoice::OverwriteAll => {
+                    resolve_all = Some(CollisionResolution::Overwrite);
+                    collision_resolution = Some(CollisionResolution::Overwrite);
+                }
+                CollisionResolutionChoice::SkipAll => {
+                    resolve_all = Some(CollisionResolution::Skip);
+                    collision_resolution = Some(CollisionResolution::Skip);
+                }
+                CollisionResolutionChoice::Quit => quit = true,
             }
         }
         if quit {
             break;
         }
+        ensure_dir(&prospective_path).map_err(|_| FileError::CreateDir {
+            path: prospective_path.to_path_buf(),
+        })?;
 
         let operation_result: Result<bool, FileError> = match entry.operation {
-            Operation::Copy => match copy_items(&[&entry.path], &destination_path, &options) {
-                Ok(bytes_copied) => {
-                    if options.skip_exist && bytes_copied == 0 && prospective_path.exists() {
-                        Ok(false)
-                    } else {
-                        Ok(true)
-                    }
-                }
-                Err(source) => Err(FileError::Copy {
-                    from_path: entry.path.clone(),
-                    to_path: destination_path.clone(),
-                    source,
-                }),
-            },
-            Operation::Cut => match move_items(&[&entry.path], &destination_path, &options) {
-                Ok(bytes_moved) => {
-                    if options.skip_exist && bytes_moved == 0 && prospective_path.exists() {
-                        Ok(false)
-                    } else {
-                        Ok(true)
-                    }
-                }
-                Err(source) => Err(FileError::Move {
-                    from_path: entry.path.clone(),
-                    to_path: destination_path.clone(),
-                    source,
-                }),
-            },
+            Operation::Copy => copy_operation(&entry.path, &prospective_path, collision_resolution),
+            Operation::Cut => move_operation(&entry.path, &prospective_path, collision_resolution),
             Operation::Link => {
-                if options.overwrite {
-                    let _ = remove_items(&[&prospective_path]);
+                if let Some(resolution) = collision_resolution
+                    && resolution == CollisionResolution::Overwrite
+                {
+                    let _ = remove_file(&prospective_path);
                 }
                 match symlink(&entry.path, &prospective_path) {
                     Ok(_) => Ok(true),
-                    Err(error)
-                        if error.kind() == IoErrorKind::AlreadyExists && options.skip_exist =>
-                    {
-                        Ok(false)
+                    Err(error) => {
+                        if let Some(resolution) = collision_resolution
+                            && resolution == CollisionResolution::Skip
+                            && error.kind() == IoErrorKind::AlreadyExists
+                        {
+                            Ok(false)
+                        } else {
+                            Err(FileError::Link {
+                                from_path: entry.path.clone(),
+                                to_path: prospective_path.clone(),
+                                source: error,
+                            })
+                        }
                     }
-                    Err(source) => Err(FileError::Link {
-                        from_path: entry.path.clone(),
-                        to_path: destination_path.clone(),
-                        source,
-                    }),
                 }
             }
         };
@@ -185,15 +184,7 @@ fn handle_paste_with_prompt<P: AsRef<Path>>(
         match operation_result {
             Ok(pasted) => {
                 if pasted {
-                    if let Operation::Cut = entry.operation {
-                        let file_name =
-                            entry.path.file_name().ok_or_else(|| FileError::FileName {
-                                path: entry.path.clone(),
-                            })?;
-                        let mut new_path = destination_path.clone();
-                        new_path.push(file_name);
-                        entry.path = new_path;
-                    }
+                    entry.path = prospective_path;
                     if let Some(clipboard_entries) = clipboard_entries.as_mut() {
                         clipboard_entries.retain(|clipboard_entry| clipboard_entry.id != entry.id);
                     }
@@ -293,14 +284,7 @@ pub fn get_absolute_path<P: AsRef<Path>>(path: P) -> Result<PathBuf, FileError> 
     } else {
         path.to_path_buf()
     };
-    let canonical_path =
-        absolute_path
-            .canonicalize()
-            .map_err(|source| FileError::AbsolutePath {
-                path: path.to_path_buf(),
-                source,
-            })?;
-    Ok(canonical_path)
+    Ok(absolute_path)
 }
 
 fn expand_paths<P: AsRef<Path>>(
@@ -367,14 +351,14 @@ fn check_validity(entry: &RecordEntry) -> Result<Option<FileWarning>, FileError>
         }));
     }
 
-    if let (Some(expected_size), Some(self_size)) = (size, entry.size) {
-        if self_size != expected_size {
-            return Ok(Some(FileWarning::SizeMismatch {
-                path: absolute_path,
-                old_size: self_size,
-                new_size: expected_size,
-            }));
-        }
+    if let (Some(expected_size), Some(self_size)) = (size, entry.size)
+        && self_size != expected_size
+    {
+        return Ok(Some(FileWarning::SizeMismatch {
+            path: absolute_path,
+            old_size: self_size,
+            new_size: expected_size,
+        }));
     }
 
     if modified
@@ -395,17 +379,90 @@ fn check_validity(entry: &RecordEntry) -> Result<Option<FileWarning>, FileError>
     Ok(None)
 }
 
-fn get_overwrite_choice(path: &Path) -> OverwriteChoice {
+fn get_collision_resolution_choice(path: &Path) -> CollisionResolutionChoice {
     loop {
-        println!("{}", OVERWRITE_CHOICE_WARNING);
+        println!("[Warning]: Destination path already exists at: ");
         println!("{}", path.to_string_lossy());
-        println!("{}", OVERWRITE_CHOICE_PROMPT);
+        println!(
+            "Overwrite?\nY: yes; N: no; A: overwrite all remaining; S: skip all remaining; Q: quit"
+        );
         let choice: String = read!();
-        if let Some(user_choice) = OverwriteChoice::from_str(&choice) {
+        if let Some(user_choice) = CollisionResolutionChoice::from_str(&choice) {
             return user_choice;
         }
-        println!("{}", OVERWRITE_CHOICE_RETRY);
+        println!("Invalid input. Please try again.");
     }
+}
+
+fn copy_operation(
+    from: &PathBuf,
+    to: &PathBuf,
+    collision_resolution: Option<CollisionResolution>,
+) -> Result<bool, FileError> {
+    if to.exists() {
+        match collision_resolution {
+            Some(CollisionResolution::Overwrite) => (),
+            Some(CollisionResolution::Skip) => return Ok(false),
+            None => unreachable!(),
+        }
+    }
+    if from.is_dir() {
+        copy_dir(from, to).map_err(|source| FileError::Copy {
+            from_path: from.clone(),
+            to_path: to.clone(),
+            source,
+        })?;
+        Ok(true)
+    } else {
+        copy(from, to).map_err(|source| FileError::Copy {
+            from_path: from.clone(),
+            to_path: to.clone(),
+            source,
+        })?;
+        Ok(true)
+    }
+}
+
+fn move_operation(
+    from: &PathBuf,
+    to: &PathBuf,
+    collision_resolution: Option<CollisionResolution>,
+) -> Result<bool, FileError> {
+    if to.exists() {
+        match collision_resolution {
+            Some(CollisionResolution::Overwrite) => (),
+            Some(CollisionResolution::Skip) => return Ok(false),
+            None => unreachable!(),
+        }
+    }
+    rename(from, to).map_err(|source| FileError::Move {
+        from_path: from.clone(),
+        to_path: to.clone(),
+        source,
+    })?;
+    Ok(true)
+}
+
+pub fn ensure_dir(path: &Path) -> Result<(), IoError> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    let parent_dir = match path.parent() {
+        Some(p) => p,
+        None => {
+            return Err(IoError::new(
+                IoErrorKind::InvalidInput,
+                format!(
+                    "Path '{}' has no parent and is not an existing directory.",
+                    path.display()
+                ),
+            ));
+        }
+    };
+    if parent_dir.as_os_str().is_empty() {
+        return Ok(());
+    }
+    create_dir_all(parent_dir)
 }
 
 #[cfg(test)]
@@ -420,7 +477,7 @@ mod tests {
     };
     use serial_test::serial;
     use std::{
-        fs::{canonicalize, symlink_metadata, File, OpenOptions},
+        fs::{File, OpenOptions, canonicalize, symlink_metadata},
         io::Write,
         os::unix::fs::symlink,
         thread::sleep,
@@ -428,24 +485,24 @@ mod tests {
     };
     use tempfile::tempdir;
 
-    fn mock_overwrite_choice_yes(_: &Path) -> OverwriteChoice {
-        OverwriteChoice::Yes
+    fn mock_collision_resolution_choice_yes(_: &Path) -> CollisionResolutionChoice {
+        CollisionResolutionChoice::Yes
     }
 
-    fn mock_overwrite_choice_no(_: &Path) -> OverwriteChoice {
-        OverwriteChoice::No
+    fn mock_collision_resolution_choice_no(_: &Path) -> CollisionResolutionChoice {
+        CollisionResolutionChoice::No
     }
 
-    fn mock_overwrite_choice_quit(_: &Path) -> OverwriteChoice {
-        OverwriteChoice::Quit
+    fn mock_collision_resolution_choice_quit(_: &Path) -> CollisionResolutionChoice {
+        CollisionResolutionChoice::Quit
     }
 
-    fn mock_overwrite_choice_overwrite_all(_: &Path) -> OverwriteChoice {
-        OverwriteChoice::OverwriteAll
+    fn mock_collision_resolution_choice_overwrite_all(_: &Path) -> CollisionResolutionChoice {
+        CollisionResolutionChoice::OverwriteAll
     }
 
-    fn mock_overwrite_choice_skip_all(_: &Path) -> OverwriteChoice {
-        OverwriteChoice::SkipAll
+    fn mock_collision_resolution_choice_skip_all(_: &Path) -> CollisionResolutionChoice {
+        CollisionResolutionChoice::SkipAll
     }
 
     #[test]
@@ -476,7 +533,8 @@ mod tests {
         write_clipboard(&[entry]).unwrap();
 
         let (infos, warnings) =
-            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
+            handle_paste_with_prompt(&env.dest_dir, None, mock_collision_resolution_choice_yes)
+                .unwrap();
 
         assert_eq!(infos.len(), 1);
         assert!(warnings.is_empty());
@@ -497,7 +555,8 @@ mod tests {
         write_clipboard(&[entry]).unwrap();
 
         let (infos, warnings) =
-            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
+            handle_paste_with_prompt(&env.dest_dir, None, mock_collision_resolution_choice_yes)
+                .unwrap();
 
         assert_eq!(infos.len(), 1);
         assert!(warnings.is_empty());
@@ -519,14 +578,17 @@ mod tests {
         let entry = get_test_entry(&file_path, Operation::Link);
         write_clipboard(&[entry]).unwrap();
 
-        handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
+        handle_paste_with_prompt(&env.dest_dir, None, mock_collision_resolution_choice_yes)
+            .unwrap();
 
         let dest_link_path = env.dest_dir.join("a.txt");
         assert!(dest_link_path.exists());
-        assert!(symlink_metadata(&dest_link_path)
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            symlink_metadata(&dest_link_path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]
@@ -544,7 +606,8 @@ mod tests {
         write_clipboard(std::slice::from_ref(&entry)).unwrap();
 
         let (infos, warnings) =
-            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_yes).unwrap();
+            handle_paste_with_prompt(&env.dest_dir, None, mock_collision_resolution_choice_yes)
+                .unwrap();
 
         assert!(infos.is_empty());
         assert!(warnings.is_empty());
@@ -566,7 +629,8 @@ mod tests {
         create_test_file(&destination_file_path, "a");
 
         let (infos, warnings) =
-            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_quit).unwrap();
+            handle_paste_with_prompt(&env.dest_dir, None, mock_collision_resolution_choice_quit)
+                .unwrap();
 
         assert!(infos.is_empty());
         assert!(warnings.is_empty());
@@ -588,7 +652,8 @@ mod tests {
         create_test_file(&destination_file_path, "destination content");
 
         let (infos, warnings) =
-            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_no).unwrap();
+            handle_paste_with_prompt(&env.dest_dir, None, mock_collision_resolution_choice_no)
+                .unwrap();
 
         assert!(infos.is_empty());
         assert!(warnings.is_empty());
@@ -619,8 +684,12 @@ mod tests {
 
         write_clipboard(&[entry_a.clone(), entry_b.clone()]).unwrap();
 
-        let (infos, warnings) =
-            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_skip_all).unwrap();
+        let (infos, warnings) = handle_paste_with_prompt(
+            &env.dest_dir,
+            None,
+            mock_collision_resolution_choice_skip_all,
+        )
+        .unwrap();
 
         assert_eq!(infos.len(), 1);
         assert!(warnings.is_empty());
@@ -770,7 +839,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_absolute_path_for_existing_file() {
+    fn test_get_absolute_path() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_file.txt");
         File::create(&file_path).unwrap();
@@ -779,15 +848,6 @@ mod tests {
         assert!(absolute_path.is_absolute());
         assert!(absolute_path.exists());
         assert_eq!(absolute_path, canonicalize(&file_path).unwrap());
-    }
-
-    #[test]
-    fn test_get_absolute_path_for_non_existent_file() {
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("non_existent.txt");
-
-        let result = get_absolute_path(&file_path);
-        assert!(result.is_err());
     }
 
     #[test]
@@ -857,9 +917,12 @@ mod tests {
 
         write_clipboard(&[entry1, entry2]).unwrap();
 
-        let (infos, warnings) =
-            handle_paste_with_prompt(&env.dest_dir, None, mock_overwrite_choice_overwrite_all)
-                .unwrap();
+        let (infos, warnings) = handle_paste_with_prompt(
+            &env.dest_dir,
+            None,
+            mock_collision_resolution_choice_overwrite_all,
+        )
+        .unwrap();
 
         assert_eq!(infos.len(), 2);
         assert!(warnings.is_empty());

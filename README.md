@@ -77,7 +77,7 @@ clp clear
 
 ### TUI Interaction
 
-![](tui.png)
+![tui](assets/tui.png)
 
 When the TUI is launched (e.g., with `clp list` or `clp history`):
 

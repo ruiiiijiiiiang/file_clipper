@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, TimestampSeconds};
+use serde_with::{TimestampSeconds, serde_as};
 use std::{path::PathBuf, time::SystemTime};
 use strum_macros::Display;
 use uuid::Uuid;
@@ -71,8 +71,14 @@ pub struct PasteContent {
     pub source: RecordType,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum CollisionResolution {
+    Skip,
+    Overwrite,
+}
+
 #[derive(Debug, Clone)]
-pub enum OverwriteChoice {
+pub enum CollisionResolutionChoice {
     Yes,
     No,
     OverwriteAll,
@@ -80,14 +86,14 @@ pub enum OverwriteChoice {
     Quit,
 }
 
-impl OverwriteChoice {
-    pub fn from_str(input: &str) -> Option<OverwriteChoice> {
+impl CollisionResolutionChoice {
+    pub fn from_str(input: &str) -> Option<CollisionResolutionChoice> {
         match input.to_lowercase().as_str() {
-            "y" => Some(OverwriteChoice::Yes),
-            "n" => Some(OverwriteChoice::No),
-            "a" => Some(OverwriteChoice::OverwriteAll),
-            "s" => Some(OverwriteChoice::SkipAll),
-            "q" => Some(OverwriteChoice::Quit),
+            "y" => Some(CollisionResolutionChoice::Yes),
+            "n" => Some(CollisionResolutionChoice::No),
+            "a" => Some(CollisionResolutionChoice::OverwriteAll),
+            "s" => Some(CollisionResolutionChoice::SkipAll),
+            "q" => Some(CollisionResolutionChoice::Quit),
             _ => None,
         }
     }

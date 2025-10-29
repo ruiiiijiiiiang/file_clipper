@@ -1,5 +1,5 @@
 use clap::CommandFactory;
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use std::{error::Error, io, str::FromStr};
 
 mod cli;
@@ -13,7 +13,7 @@ mod tui;
 pub mod test_helpers;
 
 use {
-    cli::{handle_cli, Cli},
+    cli::{Cli, handle_cli},
     errors::{AppError, AppInfo, AppWarning},
     files::{handle_paste, handle_transfer},
     models::{Action, Operation, RecordType},

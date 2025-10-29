@@ -1,17 +1,17 @@
 use chrono::{DateTime, Local};
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use ratatui::{
+    Frame, TerminalOptions, Viewport,
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{
-        palette::tailwind::{BLUE, NEUTRAL, TEAL},
         Modifier, Style, Stylize,
+        palette::tailwind::{BLUE, NEUTRAL, TEAL},
     },
     text::Line,
     widgets::{
         Block, Borders, Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation,
         ScrollbarState, Table, TableState,
     },
-    Frame, TerminalOptions, Viewport,
 };
 use std::{env::current_dir, time::Duration};
 
@@ -374,10 +374,10 @@ impl Tui {
     }
 
     fn mark(&mut self) {
-        if let Some(selected) = self.table_state.selected() {
-            if !self.invalid[selected] {
-                self.marked[selected] = !self.marked[selected];
-            }
+        if let Some(selected) = self.table_state.selected()
+            && !self.invalid[selected]
+        {
+            self.marked[selected] = !self.marked[selected];
         }
     }
 
@@ -412,18 +412,14 @@ impl Tui {
             .zip(self.marked.clone())
             .filter_map(
                 |(entry, selected)| {
-                    if selected {
-                        Some(entry)
-                    } else {
-                        None
-                    }
+                    if selected { Some(entry) } else { None }
                 },
             )
             .collect();
-        if marked_entries.is_empty() {
-            if let Some(selected) = self.table_state.selected() {
-                marked_entries.push(self.entries[selected].clone());
-            }
+        if marked_entries.is_empty()
+            && let Some(selected) = self.table_state.selected()
+        {
+            marked_entries.push(self.entries[selected].clone());
         }
         let paste_content = PasteContent {
             entries: marked_entries,

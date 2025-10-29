@@ -1,12 +1,12 @@
 use ratatui::widgets::{ScrollbarState, TableState};
 use std::{
     env::set_var,
-    fs::{create_dir_all, File},
+    fs::{File, create_dir_all},
     io::Write,
     path::{Path, PathBuf},
     time::SystemTime,
 };
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 use uuid::Uuid;
 
 use crate::{
@@ -27,7 +27,9 @@ pub fn setup_test_env() -> TestEnv {
     let dest_dir = home_dir.path().join("dest");
     create_dir_all(&source_dir).unwrap();
     create_dir_all(&dest_dir).unwrap();
-    set_var("HOME", home_dir.path());
+    unsafe {
+        set_var("HOME", home_dir.path());
+    }
 
     TestEnv {
         home_dir,
