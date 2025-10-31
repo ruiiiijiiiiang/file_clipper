@@ -24,12 +24,12 @@
 
         fileClipperPkg = pkgs.rustPlatform.buildRustPackage {
           pname = "file_clipper";
-          version = "0.1.2";
+          version = "0.1.3";
 
           src = ./.;
           binaries = [ "clp" ];
 
-          cargoHash = "sha256-nja4ieMcIkcYVZO14KpepxAGaQpQ9C/2AI8Kpq6kbyY=";
+          cargoHash = "sha256-MlLT1FEXCGi5+FST8Xlzu+EmeTWcsEUI2t2O2kd1owA=";
         };
       in
       {
