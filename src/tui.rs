@@ -149,7 +149,7 @@ impl Tui {
                 Constraint::Length(TIMESTAMP_WIDTH),
                 Box::new(|_, entry| {
                     let local_datetime: DateTime<Local> = entry.timestamp.into();
-                    local_datetime.format("%a, %d %b %Y %H:%M:%S").to_string()
+                    local_datetime.format("%a, %b %d %Y, %H:%M:%S").to_string()
                 }),
             ),
             (

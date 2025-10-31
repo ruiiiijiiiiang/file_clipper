@@ -443,26 +443,24 @@ fn move_operation(
     Ok(true)
 }
 
-pub fn ensure_dir(path: &Path) -> Result<(), IoError> {
-    if path.is_dir() {
-        return Ok(());
-    }
-    let parent_dir = match path.parent() {
-        Some(p) => p,
-        None => {
-            return Err(IoError::new(
-                IoErrorKind::InvalidInput,
-                format!(
-                    "Path '{}' has no parent and is not an existing directory.",
-                    path.display()
-                ),
-            ));
+fn ensure_dir(path: &Path) -> Result<(), IoError> {
+    if path.exists() {
+        if path.is_dir() {
+            return Ok(());
         }
-    };
-    if parent_dir.as_os_str().is_empty() {
-        return Ok(());
+        if let Some(parent) = path.parent()
+            && !parent.exists()
+        {
+            create_dir_all(parent)?;
+        }
+    } else if path.extension().is_some() || path.to_string_lossy().contains('.') {
+        if let Some(parent) = path.parent() {
+            create_dir_all(parent)?;
+        }
+    } else {
+        create_dir_all(path)?;
     }
-    create_dir_all(parent_dir)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -930,5 +928,80 @@ mod tests {
         assert!(env.dest_dir.join("duplicate.txt").exists());
         let clipboard = read_clipboard().unwrap().unwrap();
         assert!(clipboard.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_paste_copy_rename_file() {
+        let env = setup_test_env();
+        let file_path = env.source_dir.join("a.txt");
+        create_test_file(&file_path, "a");
+        let entry = get_test_entry(&file_path, Operation::Copy);
+        write_clipboard(&[entry]).unwrap();
+
+        let dest_path = env.dest_dir.join("b.txt");
+
+        let (infos, warnings) =
+            handle_paste_with_prompt(&dest_path, None, mock_collision_resolution_choice_yes)
+                .unwrap();
+
+        assert_eq!(infos.len(), 1);
+        assert!(warnings.is_empty());
+        assert!(dest_path.exists());
+        assert!(file_path.exists());
+
+        let history = read_history().unwrap().unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].path, dest_path);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_paste_copy_directory_to_directory() {
+        let env = setup_test_env();
+        let source_dir = env.source_dir.join("dir_a");
+        create_dir_all(&source_dir).unwrap();
+        create_test_file(&source_dir.join("a.txt"), "a");
+
+        let entry = get_test_entry(&source_dir, Operation::Copy);
+        write_clipboard(&[entry]).unwrap();
+
+        let (infos, warnings) =
+            handle_paste_with_prompt(&env.dest_dir, None, mock_collision_resolution_choice_yes)
+                .unwrap();
+
+        assert_eq!(infos.len(), 1);
+        assert!(warnings.is_empty());
+
+        let dest_dir = env.dest_dir.join("dir_a");
+        assert!(dest_dir.exists());
+        assert!(dest_dir.is_dir());
+        assert!(dest_dir.join("a.txt").exists());
+        assert!(source_dir.exists());
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_paste_move_directory() {
+        let env = setup_test_env();
+        let source_dir = env.source_dir.join("dir_a");
+        create_dir_all(&source_dir).unwrap();
+        create_test_file(&source_dir.join("a.txt"), "a");
+
+        let entry = get_test_entry(&source_dir, Operation::Cut);
+        write_clipboard(&[entry]).unwrap();
+
+        let (infos, warnings) =
+            handle_paste_with_prompt(&env.dest_dir, None, mock_collision_resolution_choice_yes)
+                .unwrap();
+
+        assert_eq!(infos.len(), 1);
+        assert!(warnings.is_empty());
+
+        let dest_dir = env.dest_dir.join("dir_a");
+        assert!(dest_dir.exists());
+        assert!(dest_dir.is_dir());
+        assert!(dest_dir.join("a.txt").exists());
+        assert!(!source_dir.exists());
     }
 }
