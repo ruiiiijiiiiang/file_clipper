@@ -16,23 +16,33 @@ use crate::{
 };
 
 pub struct TestEnv {
+    pub home_dir: TempDir,
+    pub state_dir: PathBuf,
     pub source_dir: PathBuf,
     pub dest_dir: PathBuf,
-    pub home_dir: TempDir,
 }
 
 pub fn setup_test_env() -> TestEnv {
     let home_dir = tempdir().expect("Failed to create temp home dir");
-    let source_dir = home_dir.path().join("source");
-    let dest_dir = home_dir.path().join("dest");
-    create_dir_all(&source_dir).unwrap();
-    create_dir_all(&dest_dir).unwrap();
+
+    // Set HOME env var first so dirs::state_dir() will use it
     unsafe {
         set_var("HOME", home_dir.path());
     }
+    let state_dir = dirs::state_dir()
+        .expect("Failed to get state dir")
+        .join("file_clipper");
+
+    let source_dir = home_dir.path().join("source");
+    let dest_dir = home_dir.path().join("dest");
+
+    create_dir_all(&state_dir).unwrap();
+    create_dir_all(&source_dir).unwrap();
+    create_dir_all(&dest_dir).unwrap();
 
     TestEnv {
         home_dir,
+        state_dir,
         source_dir,
         dest_dir,
     }

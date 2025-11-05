@@ -1,6 +1,6 @@
+use dirs::state_dir;
 use std::{
-    env::home_dir,
-    fs::{create_dir_all, remove_dir, remove_file, File},
+    fs::{File, create_dir_all, remove_dir, remove_file},
     io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     sync::Mutex,
@@ -17,7 +17,6 @@ static CLIPBOARD_MUTEX: Mutex<()> = Mutex::new(());
 static HISTORY_MUTEX: Mutex<()> = Mutex::new(());
 
 const MAX_CLIPBOARD_ENTRIES: usize = 200;
-const STORAGE_DIR: &str = ".local/state/file_clipper";
 
 pub fn read_entries(mode: &RecordType) -> Result<Vec<RecordEntry>, AppError> {
     let entries = match mode {
@@ -75,7 +74,7 @@ pub fn clear_records() -> Result<Vec<AppInfo>, AppError> {
                 return Err(AppError::Record(RecordError::ClearRecords {
                     path: record_path.clone(),
                     source,
-                }))
+                }));
             }
             _ => {
                 infos.push(AppInfo::Clear { path: record_path });
@@ -83,13 +82,15 @@ pub fn clear_records() -> Result<Vec<AppInfo>, AppError> {
         };
     }
 
-    let dir_path = home_dir().ok_or(RecordError::GetHomeDir)?.join(STORAGE_DIR);
+    let dir_path = state_dir()
+        .ok_or(RecordError::GetStateDir)?
+        .join("file_clipper");
     match remove_dir(&dir_path) {
         Err(source) if source.kind() != ErrorKind::NotFound => {
             return Err(AppError::Record(RecordError::ClearRecords {
                 path: dir_path.clone(),
                 source,
-            }))
+            }));
         }
         _ => {
             infos.push(AppInfo::Clear { path: dir_path });
@@ -99,12 +100,14 @@ pub fn clear_records() -> Result<Vec<AppInfo>, AppError> {
 }
 
 fn get_storage_path(record_type: RecordType) -> Result<PathBuf, RecordError> {
-    let path = home_dir().ok_or(RecordError::GetHomeDir)?.join(STORAGE_DIR);
-    create_dir_all(&path).map_err(|source| RecordError::CreateConfigDir {
-        path: path.to_path_buf(),
+    let dir_path = state_dir()
+        .ok_or(RecordError::GetStateDir)?
+        .join("file_clipper");
+    create_dir_all(&dir_path).map_err(|source| RecordError::CreateConfigDir {
+        path: dir_path.to_path_buf(),
         source,
     })?;
-    Ok(path.join(format!("{}.toml", record_type)))
+    Ok(dir_path.join(format!("{}.toml", record_type)))
 }
 
 fn read_records(record_type: RecordType) -> Result<Option<Vec<RecordEntry>>, RecordError> {
@@ -144,7 +147,7 @@ fn read_toml_file<P: AsRef<Path>>(
             return Err(RecordError::OpenRecordFile {
                 path: path.into(),
                 source,
-            })
+            });
         }
         Ok(file) => file,
     };
@@ -348,7 +351,7 @@ mod tests {
 
         let clipboard_path = get_storage_path(RecordType::Clipboard).unwrap();
         let history_path = get_storage_path(RecordType::History).unwrap();
-        let dir_path = _env.home_dir.path().join(STORAGE_DIR);
+        let dir_path = _env.state_dir;
 
         assert!(clipboard_path.exists());
         assert!(history_path.exists());
@@ -364,5 +367,187 @@ mod tests {
         assert!(!clipboard_path.exists());
         assert!(!history_path.exists());
         assert!(!dir_path.exists());
+    }
+
+    #[test]
+    #[serial]
+    fn test_clear_records_when_empty() {
+        let _env = setup_test_env();
+
+        let result = clear_records().unwrap();
+
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    #[serial]
+    fn test_read_entries_clipboard() {
+        let _env = setup_test_env();
+        let entry = create_mock_record_entry(None, None, None, None, None);
+        write_clipboard(std::slice::from_ref(&entry)).unwrap();
+
+        let entries = read_entries(&RecordType::Clipboard).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, entry.id);
+    }
+
+    #[test]
+    #[serial]
+    fn test_read_entries_history() {
+        let _env = setup_test_env();
+        let entry = create_mock_record_entry(None, None, None, None, None);
+        write_history(std::slice::from_ref(&entry)).unwrap();
+
+        let entries = read_entries(&RecordType::History).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, entry.id);
+    }
+
+    #[test]
+    #[serial]
+    fn test_read_entries_empty_clipboard() {
+        let _env = setup_test_env();
+        let entries = read_entries(&RecordType::Clipboard).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn test_read_entries_empty_history() {
+        let _env = setup_test_env();
+        let entries = read_entries(&RecordType::History).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn test_write_clipboard_ordering() {
+        let _env = setup_test_env();
+        let entry1 = create_mock_record_entry(
+            Some(PathBuf::from("/tmp/file1")),
+            Some(Operation::Copy),
+            None,
+            None,
+            None,
+        );
+        let entry2 = create_mock_record_entry(
+            Some(PathBuf::from("/tmp/file2")),
+            Some(Operation::Cut),
+            None,
+            None,
+            None,
+        );
+        let entry3 = create_mock_record_entry(
+            Some(PathBuf::from("/tmp/file3")),
+            Some(Operation::Link),
+            None,
+            None,
+            None,
+        );
+
+        write_clipboard(&[entry1.clone(), entry2.clone(), entry3.clone()]).unwrap();
+
+        let clipboard = read_clipboard().unwrap().unwrap();
+        assert_eq!(clipboard.len(), 3);
+        assert_eq!(clipboard[0].id, entry1.id);
+        assert_eq!(clipboard[1].id, entry2.id);
+        assert_eq!(clipboard[2].id, entry3.id);
+    }
+
+    #[test]
+    #[serial]
+    fn test_write_history_ordering() {
+        let _env = setup_test_env();
+        let entry1 = create_mock_record_entry(None, None, None, None, None);
+        let entry2 = create_mock_record_entry(None, None, None, None, None);
+
+        write_history(&[entry1.clone(), entry2.clone()]).unwrap();
+
+        let history = read_history().unwrap().unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].id, entry1.id);
+        assert_eq!(history[1].id, entry2.id);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_remove_with_empty_clipboard() {
+        let _env = setup_test_env();
+        let random_id = Uuid::new_v4();
+        let result = handle_remove(random_id).unwrap();
+
+        assert!(!result.is_empty());
+        assert!(matches!(
+            result[0],
+            AppWarning::Record(RecordWarning::ClipboardUnreadable)
+        ));
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_remove_last_entry() {
+        let _env = setup_test_env();
+        let entry = create_mock_record_entry(None, None, None, None, None);
+        write_clipboard(std::slice::from_ref(&entry)).unwrap();
+
+        let result = handle_remove(entry.id).unwrap();
+        assert!(result.is_empty());
+
+        let clipboard = read_clipboard().unwrap().unwrap();
+        assert!(clipboard.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_remove_middle_entry() {
+        let _env = setup_test_env();
+        let entry1 = create_mock_record_entry(None, None, None, None, None);
+        let entry2 = create_mock_record_entry(None, None, None, None, None);
+        let entry3 = create_mock_record_entry(None, None, None, None, None);
+        write_clipboard(&[entry1.clone(), entry2.clone(), entry3.clone()]).unwrap();
+
+        let result = handle_remove(entry2.id).unwrap();
+        assert!(result.is_empty());
+
+        let clipboard = read_clipboard().unwrap().unwrap();
+        assert_eq!(clipboard.len(), 2);
+        assert_eq!(clipboard[0].id, entry1.id);
+        assert_eq!(clipboard[1].id, entry3.id);
+    }
+
+    #[test]
+    #[serial]
+    fn test_write_records_exceeding_max() {
+        let _env = setup_test_env();
+        let mut entries = Vec::new();
+        for _ in 0..(MAX_CLIPBOARD_ENTRIES + 100) {
+            entries.push(create_mock_record_entry(None, None, None, None, None));
+        }
+
+        write_clipboard(&entries).unwrap();
+
+        let clipboard = read_clipboard().unwrap().unwrap();
+        assert_eq!(clipboard.len(), MAX_CLIPBOARD_ENTRIES);
+        assert_eq!(clipboard[0].id, entries[0].id);
+        assert_eq!(
+            clipboard[MAX_CLIPBOARD_ENTRIES - 1].id,
+            entries[MAX_CLIPBOARD_ENTRIES - 1].id
+        );
+    }
+
+    #[test]
+    fn test_get_storage_path_clipboard() {
+        let result = get_storage_path(RecordType::Clipboard);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.to_string_lossy().contains("clipboard.toml"));
+    }
+
+    #[test]
+    fn test_get_storage_path_history() {
+        let result = get_storage_path(RecordType::History);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.to_string_lossy().contains("history.toml"));
     }
 }

@@ -1004,4 +1004,341 @@ mod tests {
         assert!(dest_dir.join("a.txt").exists());
         assert!(!source_dir.exists());
     }
+
+    #[test]
+    #[serial]
+    fn test_handle_transfer_cut() {
+        let env = setup_test_env();
+        let file_path = env.source_dir.join("cut_test.txt");
+        create_test_file(&file_path, "cut content");
+
+        let (infos, warnings) = handle_transfer(vec![&file_path], Operation::Cut).unwrap();
+
+        assert_eq!(infos.len(), 1);
+        assert!(warnings.is_empty());
+        assert!(matches!(infos[0], AppInfo::Cut { .. }));
+
+        let clipboard = read_clipboard().unwrap().unwrap();
+        assert_eq!(clipboard.len(), 1);
+        assert_eq!(clipboard[0].operation, Operation::Cut);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_transfer_link() {
+        let env = setup_test_env();
+        let file_path = env.source_dir.join("link_test.txt");
+        create_test_file(&file_path, "link content");
+
+        let (infos, warnings) = handle_transfer(vec![&file_path], Operation::Link).unwrap();
+
+        assert_eq!(infos.len(), 1);
+        assert!(warnings.is_empty());
+        assert!(matches!(infos[0], AppInfo::Link { .. }));
+
+        let clipboard = read_clipboard().unwrap().unwrap();
+        assert_eq!(clipboard.len(), 1);
+        assert_eq!(clipboard[0].operation, Operation::Link);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_transfer_multiple_files() {
+        let env = setup_test_env();
+        let file1 = env.source_dir.join("multi1.txt");
+        let file2 = env.source_dir.join("multi2.txt");
+        let file3 = env.source_dir.join("multi3.txt");
+        create_test_file(&file1, "one");
+        create_test_file(&file2, "two");
+        create_test_file(&file3, "three");
+
+        let (infos, warnings) =
+            handle_transfer(vec![&file1, &file2, &file3], Operation::Copy).unwrap();
+
+        assert_eq!(infos.len(), 3);
+        assert!(warnings.is_empty());
+
+        let clipboard = read_clipboard().unwrap().unwrap();
+        assert_eq!(clipboard.len(), 3);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_transfer_with_glob() {
+        let env = setup_test_env();
+        create_test_file(&env.source_dir.join("glob1.rs"), "rust1");
+        create_test_file(&env.source_dir.join("glob2.rs"), "rust2");
+        create_test_file(&env.source_dir.join("glob3.txt"), "text");
+
+        let glob_pattern = env.source_dir.join("*.rs");
+        let (infos, warnings) = handle_transfer(vec![glob_pattern], Operation::Copy).unwrap();
+
+        assert_eq!(infos.len(), 2);
+        assert!(warnings.is_empty());
+
+        let clipboard = read_clipboard().unwrap().unwrap();
+        assert_eq!(clipboard.len(), 2);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_transfer_with_unmatched_glob() {
+        let env = setup_test_env();
+        create_test_file(&env.source_dir.join("file.txt"), "content");
+
+        let glob_pattern = env.source_dir.join("*.rs");
+        let (infos, warnings) = handle_transfer(vec![glob_pattern], Operation::Copy).unwrap();
+
+        assert!(infos.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(matches!(
+            warnings[0],
+            AppWarning::File(FileWarning::GlobUnmatched { .. })
+        ));
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_paste_to_non_directory_with_multiple_files() {
+        let env = setup_test_env();
+        let file1 = env.source_dir.join("file1.txt");
+        let file2 = env.source_dir.join("file2.txt");
+        create_test_file(&file1, "content1");
+        create_test_file(&file2, "content2");
+
+        let entry1 = get_test_entry(&file1, Operation::Copy);
+        let entry2 = get_test_entry(&file2, Operation::Copy);
+        write_clipboard(&[entry1, entry2]).unwrap();
+
+        let non_dir_dest = env.dest_dir.join("single_file.txt");
+        create_test_file(&non_dir_dest, "destination");
+
+        let result = handle_paste_with_prompt(
+            &non_dir_dest,
+            None,
+            mock_collision_resolution_choice_yes,
+        );
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::File(FileError::FileNameCollision { num_files, .. }) => {
+                assert_eq!(num_files, 2);
+            }
+            _ => panic!("Expected FileNameCollision error"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_paste_overwrite_choice_yes() {
+        let env = setup_test_env();
+        let file_path = env.source_dir.join("overwrite.txt");
+        create_test_file(&file_path, "source");
+        let entry = get_test_entry(&file_path, Operation::Copy);
+        write_clipboard(&[entry]).unwrap();
+
+        let dest_file = env.dest_dir.join("overwrite.txt");
+        create_test_file(&dest_file, "original");
+
+        let (infos, warnings) =
+            handle_paste_with_prompt(&env.dest_dir, None, mock_collision_resolution_choice_yes)
+                .unwrap();
+
+        assert_eq!(infos.len(), 1);
+        assert!(warnings.is_empty());
+
+        let content = std::fs::read_to_string(&dest_file).unwrap();
+        assert_eq!(content, "source");
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_paste_overwrite_all_with_multiple_files() {
+        let env = setup_test_env();
+        let file1 = env.source_dir.join("file1.txt");
+        let file2 = env.source_dir.join("file2.txt");
+        create_test_file(&file1, "source1");
+        create_test_file(&file2, "source2");
+
+        let entry1 = get_test_entry(&file1, Operation::Copy);
+        let entry2 = get_test_entry(&file2, Operation::Copy);
+        write_clipboard(&[entry1, entry2]).unwrap();
+
+        let dest1 = env.dest_dir.join("file1.txt");
+        let dest2 = env.dest_dir.join("file2.txt");
+        create_test_file(&dest1, "dest1");
+        create_test_file(&dest2, "dest2");
+
+        let (infos, warnings) = handle_paste_with_prompt(
+            &env.dest_dir,
+            None,
+            mock_collision_resolution_choice_overwrite_all,
+        )
+        .unwrap();
+
+        assert_eq!(infos.len(), 2);
+        assert!(warnings.is_empty());
+
+        assert_eq!(std::fs::read_to_string(&dest1).unwrap(), "source1");
+        assert_eq!(std::fs::read_to_string(&dest2).unwrap(), "source2");
+    }
+
+    #[test]
+    #[serial]
+    fn test_expand_paths_with_mixed_patterns() {
+        let env = setup_test_env();
+        create_test_file(&env.source_dir.join("a.txt"), "a");
+        create_test_file(&env.source_dir.join("b.txt"), "b");
+        create_test_file(&env.source_dir.join("c.log"), "c");
+        create_test_file(&env.source_dir.join("specific.txt"), "specific");
+
+        let glob_path = env.source_dir.join("*.log");
+        let specific_path = env.source_dir.join("specific.txt");
+
+        let (expanded, warnings) = expand_paths(vec![glob_path, specific_path.clone()]).unwrap();
+
+        assert_eq!(expanded.len(), 2);
+        assert!(expanded.contains(&env.source_dir.join("c.log")));
+        assert!(expanded.contains(&specific_path));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_get_metadata_relative_path() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("relative_test.txt");
+        File::create(&file_path).unwrap();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let metadata = get_metadata("relative_test.txt").unwrap();
+        assert_eq!(metadata.entry_type, EntryType::File);
+        assert!(metadata.absolute_path.is_absolute());
+
+        std::env::set_current_dir(original_dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_absolute_path_relative() {
+        let dir = tempdir().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let relative_path = PathBuf::from("relative_file.txt");
+        let absolute = get_absolute_path(&relative_path).unwrap();
+
+        assert!(absolute.is_absolute());
+        assert!(absolute.ends_with("relative_file.txt"));
+
+        std::env::set_current_dir(original_dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_absolute_path_already_absolute() {
+        let absolute_path = PathBuf::from("/tmp/absolute.txt");
+        let result = get_absolute_path(&absolute_path).unwrap();
+        assert_eq!(result, absolute_path);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_paste_with_paste_content_clipboard() {
+        let env = setup_test_env();
+        let file_path = env.source_dir.join("paste_content.txt");
+        create_test_file(&file_path, "content");
+        let entry = get_test_entry(&file_path, Operation::Copy);
+
+        let paste_content = PasteContent {
+            entries: vec![entry],
+            source: RecordType::Clipboard,
+        };
+
+        let (infos, warnings) = handle_paste_with_prompt(
+            &env.dest_dir,
+            Some(paste_content),
+            mock_collision_resolution_choice_yes,
+        )
+        .unwrap();
+
+        assert_eq!(infos.len(), 1);
+        assert!(warnings.is_empty());
+        assert!(env.dest_dir.join("paste_content.txt").exists());
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_paste_with_paste_content_history() {
+        let env = setup_test_env();
+        let file_path = env.source_dir.join("history_paste.txt");
+        create_test_file(&file_path, "history content");
+        let entry = get_test_entry(&file_path, Operation::Copy);
+
+        let paste_content = PasteContent {
+            entries: vec![entry],
+            source: RecordType::History,
+        };
+
+        let (infos, warnings) = handle_paste_with_prompt(
+            &env.dest_dir,
+            Some(paste_content),
+            mock_collision_resolution_choice_yes,
+        )
+        .unwrap();
+
+        assert_eq!(infos.len(), 1);
+        assert!(warnings.is_empty());
+        assert!(env.dest_dir.join("history_paste.txt").exists());
+    }
+
+    #[test]
+    fn test_copy_operation_no_collision() {
+        let dir = tempdir().unwrap();
+        let from = dir.path().join("source.txt");
+        let to = dir.path().join("dest.txt");
+        create_test_file(&from, "copy test");
+
+        let result = copy_operation(&from, &to, None).unwrap();
+        assert!(result);
+        assert!(from.exists());
+        assert!(to.exists());
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "copy test");
+    }
+
+    #[test]
+    fn test_move_operation_no_collision() {
+        let dir = tempdir().unwrap();
+        let from = dir.path().join("source.txt");
+        let to = dir.path().join("dest.txt");
+        create_test_file(&from, "move test");
+
+        let result = move_operation(&from, &to, None).unwrap();
+        assert!(result);
+        assert!(!from.exists());
+        assert!(to.exists());
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "move test");
+    }
+
+    #[test]
+    fn test_ensure_dir_with_file() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("subdir").join("file.txt");
+
+        ensure_dir(&file_path).unwrap();
+
+        assert!(file_path.parent().unwrap().exists());
+        assert!(file_path.parent().unwrap().is_dir());
+    }
+
+    #[test]
+    fn test_ensure_dir_existing_directory() {
+        let dir = tempdir().unwrap();
+        create_dir_all(dir.path().join("existing")).unwrap();
+        let dir_path = dir.path().join("existing");
+
+        ensure_dir(&dir_path).unwrap();
+
+        assert!(dir_path.exists());
+        assert!(dir_path.is_dir());
+    }
 }

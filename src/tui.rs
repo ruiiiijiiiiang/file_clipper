@@ -532,4 +532,100 @@ mod tests {
         tui.exit();
         assert!(tui.should_exit);
     }
+
+    #[test]
+    fn test_tui_navigation_next_edge_cases() {
+        let mut tui = create_test_tui(5);
+        tui.table_state.select(Some(4));
+
+        tui.next(1);
+        assert_eq!(tui.table_state.selected(), Some(4));
+
+        tui.next(10);
+        assert_eq!(tui.table_state.selected(), Some(4));
+    }
+
+    #[test]
+    fn test_tui_navigation_previous_edge_cases() {
+        let mut tui = create_test_tui(5);
+        tui.table_state.select(Some(0));
+
+        tui.previous(1);
+        assert_eq!(tui.table_state.selected(), Some(0));
+
+        tui.previous(10);
+        assert_eq!(tui.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_tui_navigation_next_none_selected() {
+        let mut tui = create_test_tui(5);
+        tui.table_state.select(None);
+
+        tui.next(1);
+        assert_eq!(tui.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_tui_navigation_previous_none_selected() {
+        let mut tui = create_test_tui(5);
+        tui.table_state.select(None);
+
+        tui.previous(1);
+        assert_eq!(tui.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_tui_mark_with_no_selection() {
+        let mut tui = create_test_tui(5);
+        tui.table_state.select(None);
+
+        tui.mark();
+        assert!(tui.marked.iter().all(|&m| !m));
+    }
+
+    #[test]
+    fn test_tui_mark_all_empty() {
+        let mut tui = create_test_tui(0);
+        tui.mark_all();
+        assert!(tui.marked.is_empty());
+    }
+
+    #[test]
+    fn test_tui_top_with_single_entry() {
+        let mut tui = create_test_tui(1);
+        tui.top();
+        assert_eq!(tui.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_tui_bottom_with_single_entry() {
+        let mut tui = create_test_tui(1);
+        tui.bottom();
+        assert_eq!(tui.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_tui_mark_toggle_multiple_times() {
+        let mut tui = create_test_tui(3);
+        tui.table_state.select(Some(1));
+
+        for _ in 0..10 {
+            tui.mark();
+            tui.mark();
+        }
+        assert!(!tui.marked[1]);
+    }
+
+    #[test]
+    fn test_tui_navigation_with_large_jump() {
+        let mut tui = create_test_tui(100);
+        tui.table_state.select(Some(0));
+
+        tui.next(50);
+        assert_eq!(tui.table_state.selected(), Some(50));
+
+        tui.next(100);
+        assert_eq!(tui.table_state.selected(), Some(99));
+    }
 }

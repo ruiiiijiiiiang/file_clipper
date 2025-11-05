@@ -73,3 +73,68 @@ pub fn handle_cli() -> Action {
         Commands::Clear => Action::Clear,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_action_copy() {
+        let paths = vec![PathBuf::from("test.txt")];
+        match Action::Copy(paths.clone()) {
+            Action::Copy(p) => assert_eq!(p, paths),
+            _ => panic!("Expected Action::Copy"),
+        }
+    }
+
+    #[test]
+    fn test_action_cut() {
+        let paths = vec![PathBuf::from("test.txt")];
+        match Action::Cut(paths.clone()) {
+            Action::Cut(p) => assert_eq!(p, paths),
+            _ => panic!("Expected Action::Cut"),
+        }
+    }
+
+    #[test]
+    fn test_action_link() {
+        let paths = vec![PathBuf::from("test.txt")];
+        match Action::Link(paths.clone()) {
+            Action::Link(p) => assert_eq!(p, paths),
+            _ => panic!("Expected Action::Link"),
+        }
+    }
+
+    #[test]
+    fn test_action_paste() {
+        let path = PathBuf::from("/tmp");
+        match Action::Paste(path.clone()) {
+            Action::Paste(p) => assert_eq!(p, path),
+            _ => panic!("Expected Action::Paste"),
+        }
+    }
+
+    #[test]
+    fn test_action_clipboard() {
+        match Action::Clipboard {
+            Action::Clipboard => {}
+            _ => panic!("Expected Action::Clipboard"),
+        }
+    }
+
+    #[test]
+    fn test_action_history() {
+        match Action::History {
+            Action::History => {}
+            _ => panic!("Expected Action::History"),
+        }
+    }
+
+    #[test]
+    fn test_action_clear() {
+        match Action::Clear {
+            Action::Clear => {}
+            _ => panic!("Expected Action::Clear"),
+        }
+    }
+}
