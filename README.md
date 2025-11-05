@@ -1,40 +1,44 @@
-# file_clipper
+# 📋 file_clipper
 
-`file_clipper` is a command-line utility written in Rust that provides intuitive and efficient file management capabilities, mimicking the familiar "copy," "cut," and "paste" operations found in graphical user interfaces. It also includes features for managing a clipboard and viewing operation history, with an interactive terminal user interface (TUI) for enhanced usability.
+⚡ **Supercharge your terminal with GUI-style copy, cut, and paste operations!**
+
+`file_clipper` is a blazingly fast command-line utility written in Rust 🦀 that brings intuitive file management to your terminal. Experience the familiar "copy," "cut," and "paste" workflow you love from graphical interfaces, now with the speed and efficiency of the command line. Features an interactive TUI for clipboard management and operation history tracking.
 
 [![asciicast](https://asciinema.org/a/7Ud1g6tU4eL2oDuZu66Nwpi2p.svg)](https://asciinema.org/a/7Ud1g6tU4eL2oDuZu66Nwpi2p)
 
-## Features
+## ✨ Features
 
-- **Copy Files:** Copy one or more files to a temporary clipboard.
+- **📄 Copy Files:** Copy one or more files to a temporary clipboard.
   - `clp copy <path>...`
   - Aliases: `cp`, `c`, `y`
-- **Cut/Move Files:** Move one or more files to a temporary clipboard.
+- **✂️ Cut/Move Files:** Move one or more files to a temporary clipboard.
   - `clp cut <path>...`
   - Aliases: `mv`, `x`, `d`
-- **Link Files:** Copy one or more files as symbolic links.
+- **🔗 Link Files:** Copy one or more files as symbolic links.
   - `clp link <path>...`
   - Aliases: `ln`, `s`
-- **Paste Files:** Paste files from the clipboard to a specified destination.
+- **📌 Paste Files:** Paste files from the clipboard to a specified destination.
   - `clp paste [destination_path]`
   - Aliases: `p`, `v`
   - If `destination_path` is omitted, files are pasted into the current directory.
-- **List Clipboard:** View the contents of the current clipboard.
+- **📋 List Clipboard:** View the contents of the current clipboard.
   - `clp list`
   - Alias: `l`
-- **View History:** Browse a history of all copy/cut/paste operations.
+- **📜 View History:** Browse a history of all past copy/cut/paste operations.
   - `clp history`
   - Alias: `h`
-- **Clear:** Clear the clipboard and history.
+- **🧹 Clear:** Clear the clipboard and history.
   - `clp clear`
-- **Interactive TUI:** The `list` and `history` commands launch an interactive terminal interface, allowing you to select specific files for pasting and manage entries with ease.
-- **Glob Pattern Support:** Supports glob patterns for selecting multiple files (e.g., `*.txt`, `src/**/*.rs`).
+- **🖥️ Interactive TUI:** The `list` and `history` commands launch an interactive terminal interface, allowing you to select specific files for pasting and manage entries with ease.
+- **🌟 Glob Pattern Support:** Supports glob patterns for selecting multiple files (e.g., `*.txt`, `src/**/*.rs`).
 
-### Clipboard and History Mechanics
+### 🔄 Clipboard and History Mechanics
 
 When files are cut or copied, they are placed into a temporary clipboard. Upon a successful paste operation, these files are automatically removed from the clipboard and recorded in the history, providing a persistent log of all file operations.
 
-## Installation
+## 📦 Installation
+
+### Via Cargo
 
 To install `file_clipper`, you need to have [Rust and Cargo](https://www.rust-lang.org/tools/install) installed on your system.
 
@@ -42,7 +46,34 @@ To install `file_clipper`, you need to have [Rust and Cargo](https://www.rust-la
 cargo install file_clipper
 ```
 
-## Usage
+### 🐧 Arch Linux (AUR)
+
+For Arch Linux users, `file_clipper` is available on the AUR:
+
+```bash
+pacman -S file_clipper
+```
+
+### ❄️ Nix Flakes
+
+For Nix users with flakes enabled, you can run `file_clipper` directly:
+
+```bash
+# Run directly
+nix run github:ruiiiijiiiiang/file_clipper
+
+# Or add to your flake inputs
+{
+  inputs.file_clipper.url = "github:ruiiiijiiiiang/file_clipper";
+}
+
+# Then include in your packages
+environment.systemPackages = [
+  inputs.file_clipper.packages.${system}.default
+];
+```
+
+## 🚀 Usage
 
 Here are some basic examples of how to use `clp`:
 
@@ -75,7 +106,7 @@ clp history
 clp clear
 ```
 
-### TUI Interaction
+### 🎨 TUI Interaction
 
 ![tui](assets/tui.png)
 
@@ -88,20 +119,16 @@ When the TUI is launched (e.g., with `clp list` or `clp history`):
   - `x` or `d`: Remove the selected entry from the clipboard (only available in clipboard mode).
   - `q` or `Ctrl+c`: Exit the TUI.
 
-## Uninstalling
+## 🗑️ Uninstalling
 
 `file_clipper` stores record files at `$HOME/.local/state/file_clipper`. You should run `clp clear` prior to uninstalling to remove these files.
 
-After clearing the records, you can uninstall the application using Cargo:
+After clearing the records, you can uninstall the application using your package manager (e.g., `cargo uninstall file_clipper`, `pacman -R file_clipper`, or `nix profile remove`).
 
-```bash
-cargo uninstall file_clipper
-```
-
-## Contributing
+## 🤝 Contributing
 
 Contributions are welcome! Please feel free to open issues or submit pull requests.
 
-## License
+## 📄 License
 
 This project is licensed under the [MIT License](./LICENSE).
