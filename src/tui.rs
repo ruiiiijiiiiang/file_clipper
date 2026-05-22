@@ -4,7 +4,7 @@ use ratatui::{
     Frame, TerminalOptions, Viewport,
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{
-        Modifier, Style, Stylize,
+        Modifier, Style,
         palette::tailwind::{BLUE, NEUTRAL, TEAL},
     },
     text::Line,

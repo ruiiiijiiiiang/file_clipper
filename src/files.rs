@@ -1113,11 +1113,8 @@ mod tests {
         let non_dir_dest = env.dest_dir.join("single_file.txt");
         create_test_file(&non_dir_dest, "destination");
 
-        let result = handle_paste_with_prompt(
-            &non_dir_dest,
-            None,
-            mock_collision_resolution_choice_yes,
-        );
+        let result =
+            handle_paste_with_prompt(&non_dir_dest, None, mock_collision_resolution_choice_yes);
 
         assert!(result.is_err());
         match result.unwrap_err() {
