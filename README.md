@@ -11,12 +11,15 @@
 - **📄 Copy Files:** Copy one or more files to a temporary clipboard.
   - `clp copy <path>...`
   - Aliases: `cp`, `c`, `y`
+  - Accepts paths via stdin pipe (e.g., `find . -name "*.rs" | clp cp`)
 - **✂️ Cut/Move Files:** Move one or more files to a temporary clipboard.
   - `clp cut <path>...`
   - Aliases: `mv`, `x`, `d`
+  - Accepts paths via stdin pipe
 - **🔗 Link Files:** Copy one or more files as symbolic links.
   - `clp link <path>...`
   - Aliases: `ln`, `s`
+  - Accepts paths via stdin pipe
 - **📌 Paste Files:** Paste files from the clipboard to a specified destination.
   - `clp paste [destination_path]`
   - Aliases: `p`, `v`
@@ -104,6 +107,22 @@ clp history
 
 # Remove all clipboard and history entries
 clp clear
+```
+
+### Piping paths from other commands
+
+```bash
+# Pipe file paths from find
+find . -name "*.txt" | clp copy
+
+# Pipe from grep to collect matching files
+grep -rl "TODO" src/ | clp cut
+
+# Combine with a positional argument
+find . -name "*.log" | clp cp extra_file.txt
+
+# Multi-line and space-separated input both work
+echo "doc1.md doc2.md" | clp cp
 ```
 
 ### 🎨 TUI Interaction

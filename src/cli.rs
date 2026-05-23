@@ -18,7 +18,6 @@ enum Commands {
     #[command(alias = "c")]
     #[command(alias = "y")]
     Copy {
-        #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
 
@@ -27,7 +26,6 @@ enum Commands {
     #[command(alias = "d")]
     #[command(alias = "x")]
     Cut {
-        #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
 
@@ -35,7 +33,6 @@ enum Commands {
     #[command(alias = "ln")]
     #[command(alias = "s")]
     Link {
-        #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
 
